@@ -351,6 +351,46 @@ fn void test_surface_methodcall_receiver_once() @test
 }
 
 // ============================================================================
+// SAMPLE: a "JS but not JS" program — records with method fields, method
+// calls, string concatenation, and a higher-order greet function.  This
+// sample is a plausible slice of real-world usage.
+// ============================================================================
+
+fn void test_sample_greet_both() @test
+{
+	@pool() {
+		// let alice = { name: "Alice",
+		//               greet: fn(self) { "hi, I'm " + self.name } };
+		// let bob   = { name: "Bob",
+		//               greet: fn(self) { "hi, I'm " + self.name } };
+		// let greetBoth = fn(a, b) { a.greet() + " and " + b.greet() };
+		// greetBoth(alice, bob)   =>  "hi, I'm Alice and hi, I'm Bob"
+		AstNode* greet_fn = make_lambda({ "self" },
+			make_binop_node("+",
+				make_lit(mk_str("hi, I'm ")),
+				make_get(make_var("self"), make_lit(mk_str("name")))));
+		AstNode* alice = make_record({ "name", "greet" },
+			{ make_lit(mk_str("Alice")), greet_fn });
+		AstNode* bob = make_record({ "name", "greet" },
+			{ make_lit(mk_str("Bob")), greet_fn });
+		AstNode* greet_both = make_lambda({ "a", "b" },
+			make_binop_node("+",
+				make_binop_node("+",
+					make_methodcall(make_var("a"), "greet", {}),
+					make_lit(mk_str(" and "))),
+				make_methodcall(make_var("b"), "greet", {})));
+		AstNode* prog = make_letrec("alice", alice,
+			make_letrec("bob", bob,
+				make_letrec("greetBoth", greet_both,
+					make_call(make_var("greetBoth"),
+						{ make_var("alice"), make_var("bob") }))));
+		Value v = eval_surface(prog);
+		assert(v.type == STRING);
+		assert(v.str_val == "hi, I'm Alice and hi, I'm Bob");
+	};
+}
+
+// ============================================================================
 // RUNG 1 / RUNG 2 surface tests
 //   Section 5/5b: typed function, good + bad call
 //   Section 6/6b: sum type + match
