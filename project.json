@@ -1,0 +1,18 @@
+{
+  "langrev": "1",
+  "warnings": ["no-unused"],
+  "dependency-search-paths": ["lib"],
+  "dependencies": [],
+  "version": "0.1.0",
+  "sources": ["src/**"],
+  "test-sources": ["test/**"],
+  "build-dir": "build",
+  "output": "build",
+  "targets": {
+    "engine": {
+      "type": "executable"
+    }
+  },
+  "cpu": "generic",
+  "opt": "O0"
+}
