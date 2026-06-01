@@ -1,0 +1,3 @@
+use_tabs: false
+brace_style: K&R
+else_on_newline: false

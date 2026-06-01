@@ -2,22 +2,18 @@ module engine;
 import std::io;
 
 // Helpers
-fn AstNode* make_binop(String op, AstNode* lhs, AstNode* rhs) =>
-	make_call(make_prim_node(op), { lhs, rhs });
+fn AstNode* make_binop(String op, AstNode* lhs, AstNode* rhs) => make_call(make_prim_node(op), { lhs, rhs });
 
-fn AstNode* make_let(String name, AstNode* init, AstNode* body) =>
-	make_letrec(name, init, body);
+fn AstNode* make_let(String name, AstNode* init, AstNode* body) => make_letrec(name, init, body);
 
-fn Value eval_value(AstNode* node)
-{
+fn Value eval_value(AstNode* node) {
 	EvalResult r = eval(node, null);
 	assert(!r.thrown, "test program threw");
 	return r.value;
 }
 
-fn Value eval_surface(AstNode* node)
-{
-	AstNode* k = desugar(node, null);
+fn Value eval_surface(AstNode* node) {
+	AstNode* k   = desugar(node, null);
 	EvalResult r = eval(k, null);
 	assert(!r.thrown, "desugared program threw");
 	return r.value;
@@ -28,8 +24,7 @@ fn Value eval_surface(AstNode* node)
 // Sections 4, 6, 8 need the desugarer (build-order steps 3-5).
 // ============================================================================
 
-fn void test_lit_num() @test
-{
+fn void test_lit_num() @test {
 	@pool() {
 		Value v = eval_value(make_lit(mk_num(42.0)));
 		assert(v.type == NUMBER);
@@ -37,8 +32,7 @@ fn void test_lit_num() @test
 	};
 }
 
-fn void test_lit_str() @test
-{
+fn void test_lit_str() @test {
 	@pool() {
 		Value v = eval_value(make_lit(mk_str("hi")));
 		assert(v.type == STRING);
@@ -46,20 +40,20 @@ fn void test_lit_str() @test
 	};
 }
 
-fn void test_arith() @test
-{
+fn void test_arith() @test {
 	@pool() {
-		AstNode* prog = make_binop("+",
+		AstNode* prog = make_binop(
+			"+",
 			make_lit(mk_num(3.0)),
-			make_binop("*", make_lit(mk_num(4.0)), make_lit(mk_num(2.0))));
+			make_binop("*", make_lit(mk_num(4.0)), make_lit(mk_num(2.0)))
+		);
 		Value v = eval_value(prog);
 		assert(v.type == NUMBER);
 		assert(v.num_val == 11.0);
 	};
 }
 
-fn void test_strict_eq() @test
-{
+fn void test_strict_eq() @test {
 	@pool() {
 		Value a = eval_value(make_binop("===", make_lit(mk_num(3.0)), make_lit(mk_num(3.0))));
 		assert(a.type == BOOL && a.bool_val);
@@ -69,13 +63,12 @@ fn void test_strict_eq() @test
 	};
 }
 
-fn void test_closure_lexical() @test
-{
+fn void test_closure_lexical() @test {
 	@pool() {
-		AstNode* body = make_binop("+", make_var("x"), make_var("y"));
+		AstNode* body  = make_binop("+", make_var("x"), make_var("y"));
 		AstNode* inner = make_lambda({ "y" }, body);
 		AstNode* outer = make_lambda({ "x" }, inner);
-		AstNode* add = make_var("add");
+		AstNode* add   = make_var("add");
 		AstNode* add10 = make_call(add, { make_lit(mk_num(10.0)) });
 		AstNode* whole = make_let("add", outer, make_call(add10, { make_lit(mk_num(5.0)) }));
 		io::printn("about to eval");
@@ -87,141 +80,140 @@ fn void test_closure_lexical() @test
 	};
 }
 
-fn void test_let_simple() @test
-{
+fn void test_let_simple() @test {
 	@pool() {
 		// let x = 42; x  =>  42
 		AstNode* prog = make_let("x", make_lit(mk_num(42.0)), make_var("x"));
-		Value v = eval_value(prog);
+		Value v       = eval_value(prog);
 		assert(v.type == NUMBER);
 		assert(v.num_val == 42.0);
 	};
 }
 
-fn void test_let_lambda() @test
-{
+fn void test_let_lambda() @test {
 	@pool() {
 		// let id = fn(x) { x }; id(99)  =>  99
 		AstNode* id_fn = make_lambda({ "x" }, make_var("x"));
-		AstNode* prog = make_let("id", id_fn,
-			make_call(make_var("id"), { make_lit(mk_num(99.0)) }));
+		AstNode* prog = make_let("id", id_fn, make_call(make_var("id"), { make_lit(mk_num(99.0)) }));
 		Value v = eval_value(prog);
 		assert(v.type == NUMBER);
 		assert(v.num_val == 99.0);
 	};
 }
 
-fn void test_recursion_sum() @test
-{
+fn void test_recursion_sum() @test {
 	@pool() {
 		AstNode* sum_body = make_if(
 			make_binop("===", make_var("n"), make_lit(mk_num(0.0))),
 			make_var("acc"),
-			make_call(make_var("sum"), {
-				make_binop("-", make_var("n"), make_lit(mk_num(1.0))),
-				make_binop("+", make_var("acc"), make_var("n")),
-			}));
+			make_call(
+				make_var("sum"),
+				{
+					make_binop("-", make_var("n"), make_lit(mk_num(1.0))),
+					make_binop("+", make_var("acc"), make_var("n")),
+				}
+			)
+		);
 		AstNode* sum_fn = make_lambda({ "n", "acc" }, sum_body);
-		AstNode* prog = make_let("sum", sum_fn,
-			make_call(make_var("sum"), { make_lit(mk_num(10.0)), make_lit(mk_num(0.0)) }));
+		AstNode* prog = make_let(
+			"sum",
+			sum_fn,
+			make_call(make_var("sum"), { make_lit(mk_num(10.0)), make_lit(mk_num(0.0)) })
+		);
 		Value v = eval_value(prog);
 		assert(v.type == NUMBER);
 		assert(v.num_val == 55.0);
 	};
 }
 
-fn void test_array_lit_and_index() @test
-{
+fn void test_array_lit_and_index() @test {
 	@pool() {
 		AstNode* prog = make_get(
 			make_array({ make_lit(mk_num(10.0)), make_lit(mk_num(20.0)), make_lit(mk_num(30.0)) }),
-			make_lit(mk_num(1.0)));
+			make_lit(mk_num(1.0))
+		);
 		Value v = eval_value(prog);
 		assert(v.type == NUMBER);
 		assert(v.num_val == 20.0);
 	};
 }
 
-fn void test_array_push() @test
-{
+fn void test_array_push() @test {
 	@pool() {
 		// let a = [1,2,3]; len(a)  =>  3
-		AstNode* arr = make_array({ make_lit(mk_num(1.0)), make_lit(mk_num(2.0)), make_lit(mk_num(3.0)) });
+		AstNode* arr      = make_array({ make_lit(mk_num(1.0)), make_lit(mk_num(2.0)), make_lit(mk_num(3.0)) });
 		AstNode* len_call = make_call(make_prim_node("len"), { make_var("a") });
-		AstNode* prog = make_let("a", arr, len_call);
-		Value v = eval_value(prog);
+		AstNode* prog     = make_let("a", arr, len_call);
+		Value v           = eval_value(prog);
 		assert(v.type == NUMBER);
 		assert(v.num_val == 3.0);
 	};
 }
 
-fn void test_record_lit_and_get() @test
-{
+fn void test_record_lit_and_get() @test {
 	@pool() {
 		AstNode* prog = make_get(
 			make_record({ "x", "y" }, { make_lit(mk_num(3.0)), make_lit(mk_num(4.0)) }),
-			make_lit(mk_str("y")));
+			make_lit(mk_str("y"))
+		);
 		Value v = eval_value(prog);
 		assert(v.type == NUMBER);
 		assert(v.num_val == 4.0);
 	};
 }
 
-fn void test_set_returns_value() @test
-{
+fn void test_set_returns_value() @test {
 	@pool() {
-		AstNode* prog = make_let("r",
+		AstNode* prog = make_let(
+			"r",
 			make_record({ "x" }, { make_lit(mk_num(0.0)) }),
-			make_set(make_var("r"), make_lit(mk_str("x")), make_lit(mk_num(7.0))));
+			make_set(make_var("r"), make_lit(mk_str("x")), make_lit(mk_num(7.0)))
+		);
 		Value v = eval_value(prog);
 		assert(v.type == NUMBER);
 		assert(v.num_val == 7.0);
 	};
 }
 
-fn void test_set_mutates_record() @test
-{
+fn void test_set_mutates_record() @test {
 	@pool() {
 		// let r = {x: 0}; r.x = 7; r.x  =>  7
 		AstNode* set_step = make_set(make_var("r"), make_lit(mk_str("x")), make_lit(mk_num(7.0)));
-		AstNode* prog = make_let("r",
+		AstNode* prog = make_let(
+			"r",
 			make_record({ "x" }, { make_lit(mk_num(0.0)) }),
-			make_let("_", set_step, make_get(make_var("r"), make_lit(mk_str("x")))));
+			make_let("_", set_step, make_get(make_var("r"), make_lit(mk_str("x"))))
+		);
 		Value v = eval_value(prog);
 		assert(v.type == NUMBER);
 		assert(v.num_val == 7.0);
 	};
 }
 
-fn void test_throw_try() @test
-{
+fn void test_throw_try() @test {
 	@pool() {
-		AstNode* prog = make_try(
-			make_throw(make_lit(mk_str("boom"))),
-			"e",
-			make_var("e"));
+		AstNode* prog = make_try(make_throw(make_lit(mk_str("boom"))), "e", make_var("e"));
 		Value v = eval_value(prog);
 		assert(v.type == STRING);
 		assert(v.str_val == "boom");
 	};
 }
 
-fn void test_throw_try_concat() @test
-{
+fn void test_throw_try_concat() @test {
 	@pool() {
 		// try (throw "boom") catch e { "caught: " + e }   =>  "caught: boom"
 		AstNode* prog = make_try(
 			make_throw(make_lit(mk_str("boom"))),
 			"e",
-			make_binop("+", make_lit(mk_str("caught: ")), make_var("e")));
+			make_binop("+", make_lit(mk_str("caught: ")), make_var("e"))
+		);
 		Value v = eval_value(prog);
 		assert(v.type == STRING);
 		assert(v.str_val == "caught: boom");
 	};
 }
 
-fn void test_if_branches() @test
-{
+fn void test_if_branches() @test {
 	@pool() {
 		AstNode* a = make_if(make_lit(mk_bool(true)), make_lit(mk_num(1.0)), make_lit(mk_num(2.0)));
 		assert(eval_value(a).num_val == 1.0);
@@ -233,8 +225,7 @@ fn void test_if_branches() @test
 	};
 }
 
-fn void test_prim_is() @test
-{
+fn void test_prim_is() @test {
 	@pool() {
 		AstNode* p1 = make_call(make_prim_node("is_number"), { make_lit(mk_num(1.0)) });
 		assert(eval_value(p1).bool_val);
@@ -243,28 +234,25 @@ fn void test_prim_is() @test
 	};
 }
 
-fn void test_string_concat() @test
-{
+fn void test_string_concat() @test {
 	@pool() {
 		AstNode* prog = make_binop("+", make_lit(mk_str("foo")), make_lit(mk_str("bar")));
-		Value v = eval_value(prog);
+		Value v       = eval_value(prog);
 		assert(v.type == STRING);
 		assert(v.str_val == "foobar");
 	};
 }
 
-fn void test_prim_len_string() @test
-{
+fn void test_prim_len_string() @test {
 	@pool() {
 		AstNode* prog = make_call(make_prim_node("len"), { make_lit(mk_str("hello")) });
 		assert(eval_value(prog).num_val == 5.0);
 	};
 }
 
-fn void test_prim_len_array() @test
-{
+fn void test_prim_len_array() @test {
 	@pool() {
-		AstNode* arr = make_array({ make_lit(mk_num(1.0)), make_lit(mk_num(2.0)), make_lit(mk_num(3.0)) });
+		AstNode* arr  = make_array({ make_lit(mk_num(1.0)), make_lit(mk_num(2.0)), make_lit(mk_num(3.0)) });
 		AstNode* prog = make_call(make_prim_node("len"), { arr });
 		assert(eval_value(prog).num_val == 3.0);
 	};
@@ -274,77 +262,81 @@ fn void test_prim_len_array() @test
 // SURFACE (desugarer) tests — build-order step 3: MethodCall + Seq + BinOp
 // ============================================================================
 
-fn void test_surface_binop() @test
-{
+fn void test_surface_binop() @test {
 	@pool() {
 		// 3 + 4 * 2   (surface BinOp, not pre-desugared Call)
-		AstNode* prog = make_binop_node("+",
+		AstNode* prog = make_binop_node(
+			"+",
 			make_lit(mk_num(3.0)),
-			make_binop_node("*", make_lit(mk_num(4.0)), make_lit(mk_num(2.0))));
+			make_binop_node("*", make_lit(mk_num(4.0)), make_lit(mk_num(2.0)))
+		);
 		Value v = eval_surface(prog);
 		assert(v.type == NUMBER);
 		assert(v.num_val == 11.0);
 	};
 }
 
-fn void test_surface_seq() @test
-{
+fn void test_surface_seq() @test {
 	@pool() {
 		// 1; 2; 3   =>  3
-		AstNode* prog = make_seq({
-			make_lit(mk_num(1.0)),
-			make_lit(mk_num(2.0)),
-			make_lit(mk_num(3.0)),
-		});
+		AstNode* prog = make_seq({ make_lit(mk_num(1.0)), make_lit(mk_num(2.0)), make_lit(mk_num(3.0)), });
 		Value v = eval_surface(prog);
 		assert(v.type == NUMBER);
 		assert(v.num_val == 3.0);
 	};
 }
 
-fn void test_surface_methodcall_counter() @test
-{
+fn void test_surface_methodcall_counter() @test {
 	@pool() {
 		// let counter = { count: 0,
 		//                 inc: fn(self, n) { self.count = self.count + n } };
 		// counter.inc(5); counter.inc(10); counter.count    =>  15
-		AstNode* inc_fn = make_lambda({ "self", "n" },
-			make_set(make_var("self"), make_lit(mk_str("count")),
-				make_binop_node("+",
-					make_get(make_var("self"), make_lit(mk_str("count"))),
-					make_var("n"))));
-		AstNode* counter_init = make_record({ "count", "inc" },
-			{ make_lit(mk_num(0.0)), inc_fn });
+		AstNode* inc_fn = make_lambda(
+			{ "self", "n" },
+			make_set(
+				make_var("self"),
+				make_lit(mk_str("count")),
+				make_binop_node("+", make_get(make_var("self"), make_lit(mk_str("count"))), make_var("n"))
+			)
+		);
+		AstNode* counter_init = make_record({ "count", "inc" }, { make_lit(mk_num(0.0)), inc_fn });
 		AstNode* stmt1 = make_methodcall(make_var("counter"), "inc", { make_lit(mk_num(5.0)) });
 		AstNode* stmt2 = make_methodcall(make_var("counter"), "inc", { make_lit(mk_num(10.0)) });
 		AstNode* final = make_get(make_var("counter"), make_lit(mk_str("count")));
-		AstNode* body = make_seq({ stmt1, stmt2, final });
-		AstNode* prog = make_letrec("counter", counter_init, body);
-		Value v = eval_surface(prog);
+		AstNode* body  = make_seq({ stmt1, stmt2, final });
+		AstNode* prog  = make_letrec("counter", counter_init, body);
+		Value v        = eval_surface(prog);
 		assert(v.type == NUMBER);
 		assert(v.num_val == 15.0);
 	};
 }
 
-fn void test_surface_methodcall_receiver_once() @test
-{
+fn void test_surface_methodcall_receiver_once() @test {
 	@pool() {
 		// r = { hits: 0, bump: fn(self) { self.hits = self.hits + 1; self.hits } };
 		// r.bump(); r.bump()   =>  2  (each call evaluates the receiver exactly once)
-		AstNode* bump_fn = make_lambda({ "self" },
-			make_seq({
-				make_set(make_var("self"), make_lit(mk_str("hits")),
-					make_binop_node("+",
-						make_get(make_var("self"), make_lit(mk_str("hits"))),
-						make_lit(mk_num(1.0)))),
-				make_get(make_var("self"), make_lit(mk_str("hits"))),
-			}));
-		AstNode* r_init = make_record({ "hits", "bump" },
-			{ make_lit(mk_num(0.0)), bump_fn });
-		AstNode* b1 = make_methodcall(make_var("r"), "bump", {});
-		AstNode* b2 = make_methodcall(make_var("r"), "bump", {});
+		AstNode* bump_fn = make_lambda(
+			{ "self" },
+			make_seq(
+				{
+					make_set(
+						make_var("self"),
+						make_lit(mk_str("hits")),
+						make_binop_node(
+							"+",
+							make_get(make_var("self"), make_lit(mk_str("hits"))),
+							make_lit(mk_num(1.0))
+						)
+					),
+					make_get(make_var("self"), make_lit(mk_str("hits"))),
+				}
+			)
+		);
+		AstNode* r_init = make_record({ "hits", "bump" }, { make_lit(mk_num(0.0)), bump_fn });
+		AstNode* b1   = make_methodcall(make_var("r"), "bump", { });
+		AstNode* b2   = make_methodcall(make_var("r"), "bump", { });
 		AstNode* prog = make_letrec("r", r_init, make_seq({ b1, b2 }));
-		Value v = eval_surface(prog);
+		Value v       = eval_surface(prog);
 		assert(v.type == NUMBER);
 		assert(v.num_val == 2.0);
 	};
@@ -356,8 +348,7 @@ fn void test_surface_methodcall_receiver_once() @test
 // sample is a plausible slice of real-world usage.
 // ============================================================================
 
-fn void test_sample_greet_both() @test
-{
+fn void test_sample_greet_both() @test {
 	@pool() {
 		// let alice = { name: "Alice",
 		//               greet: fn(self) { "hi, I'm " + self.name } };
@@ -365,25 +356,33 @@ fn void test_sample_greet_both() @test
 		//               greet: fn(self) { "hi, I'm " + self.name } };
 		// let greetBoth = fn(a, b) { a.greet() + " and " + b.greet() };
 		// greetBoth(alice, bob)   =>  "hi, I'm Alice and hi, I'm Bob"
-		AstNode* greet_fn = make_lambda({ "self" },
-			make_binop_node("+",
-				make_lit(mk_str("hi, I'm ")),
-				make_get(make_var("self"), make_lit(mk_str("name")))));
-		AstNode* alice = make_record({ "name", "greet" },
-			{ make_lit(mk_str("Alice")), greet_fn });
-		AstNode* bob = make_record({ "name", "greet" },
-			{ make_lit(mk_str("Bob")), greet_fn });
-		AstNode* greet_both = make_lambda({ "a", "b" },
-			make_binop_node("+",
-				make_binop_node("+",
-					make_methodcall(make_var("a"), "greet", {}),
-					make_lit(mk_str(" and "))),
-				make_methodcall(make_var("b"), "greet", {})));
-		AstNode* prog = make_letrec("alice", alice,
-			make_letrec("bob", bob,
-				make_letrec("greetBoth", greet_both,
-					make_call(make_var("greetBoth"),
-						{ make_var("alice"), make_var("bob") }))));
+		AstNode* greet_fn = make_lambda(
+			{ "self" },
+			make_binop_node("+", make_lit(mk_str("hi, I'm ")), make_get(make_var("self"), make_lit(mk_str("name"))))
+		);
+		AstNode* alice = make_record({ "name", "greet" }, { make_lit(mk_str("Alice")), greet_fn });
+		AstNode* bob = make_record({ "name", "greet" }, { make_lit(mk_str("Bob")), greet_fn });
+		AstNode* greet_both = make_lambda(
+			{ "a", "b" },
+			make_binop_node(
+				"+",
+				make_binop_node("+", make_methodcall(make_var("a"), "greet", { }), make_lit(mk_str(" and "))),
+				make_methodcall(make_var("b"), "greet", { })
+			)
+		);
+		AstNode* prog = make_letrec(
+			"alice",
+			alice,
+			make_letrec(
+				"bob",
+				bob,
+				make_letrec(
+					"greetBoth",
+					greet_both,
+					make_call(make_var("greetBoth"), { make_var("alice"), make_var("bob") })
+				)
+			)
+		);
 		Value v = eval_surface(prog);
 		assert(v.type == STRING);
 		assert(v.str_val == "hi, I'm Alice and hi, I'm Bob");
@@ -396,205 +395,174 @@ fn void test_sample_greet_both() @test
 //   Section 6/6b: sum type + match
 //   Section 8: typed record check
 // ============================================================================
+// (Surface constructors `make_typed_lambda`, `make_typed_let`, `make_typedef`,
+//  `make_construct`, `make_match` live in src/main.c3 so the parser can use
+//  them too.)
 
-fn AstNode* make_typed_lambda(String[] names, Type*[] param_types, Type* ret_type, AstNode* body)
-{
-	AstNode* n = mem::new(AstNode);
-	n.type = LAMBDA_T;
-	String[] heap_names = mem::new_array(String, names.len);
-	for (int i = 0; i < names.len; i++) heap_names[i] = names[i];
-	n.names = heap_names;
-	n.param_types = param_types;
-	n.ret_type = ret_type;
-	AstNode*[] kids = mem::new_array(AstNode*, 1);
-	kids[0] = body;
-	n.children = kids;
-	return n;
-}
-
-fn AstNode* make_typed_let(String name, Type* ann_type, AstNode* init, AstNode* body)
-{
-	AstNode* n = mem::new(AstNode);
-	n.type = LET_T;
-	n.name = name;
-	n.ann_type = ann_type;
-	AstNode*[] kids = mem::new_array(AstNode*, 2);
-	kids[0] = init; kids[1] = body;
-	n.children = kids;
-	return n;
-}
-
-fn AstNode* make_typedef(String name, Type* t, AstNode* body)
-{
-	AstNode* n = mem::new(AstNode);
-	n.type = TYPEDEF;
-	n.name = name;
-	n.ret_type = t;
-	AstNode*[] kids = mem::new_array(AstNode*, 1);
-	kids[0] = body;
-	n.children = kids;
-	return n;
-}
-
-fn AstNode* make_construct(String tag, AstNode* val)
-{
-	AstNode* n = mem::new(AstNode);
-	n.type = CONSTRUCT;
-	n.name = tag;
-	AstNode*[] kids = mem::new_array(AstNode*, 1);
-	kids[0] = val;
-	n.children = kids;
-	return n;
-}
-
-fn AstNode* make_match(AstNode* scrut, String[] tags, String[] binds, AstNode*[] bodies)
-{
-	assert(tags.len == binds.len);
-	assert(tags.len == bodies.len);
-	AstNode* n = mem::new(AstNode);
-	n.type = MATCH;
-	// Encode: children = [scrut, body0, body1, ...], names = [tag0, bind0, tag1, bind1, ...]
-	String[] nm = mem::new_array(String, 2 * tags.len);
-	AstNode*[] kids = mem::new_array(AstNode*, bodies.len + 1);
-	kids[0] = scrut;
-	for (int i = 0; i < tags.len; i++)
-	{
-		nm[2 * i] = tags[i];
-		nm[2 * i + 1] = binds[i];
-		kids[i + 1] = bodies[i];
-	}
-	n.names = nm;
-	n.children = kids;
-	return n;
-}
-
-fn void test_rung1_typed_function_good() @test
-{
+fn void test_rung1_typed_function_good() @test {
 	@pool() {
 		// let add = fn(x: Int, y: Int): Int { x + y }; add(3, 4)  =>  7
-		Type* int_t = mem::new(Type); *int_t = mk_tname("Int");
+		Type* int_t = mem::new(Type);
+		*int_t = mk_tname("Int");
 		AstNode* body = make_binop_node("+", make_var("x"), make_var("y"));
-		Type*[] pts = mem::new_array(Type*, 2);
-		pts[0] = int_t; pts[1] = int_t;
+		Type*[] pts   = mem::new_array(Type*, 2);
+		pts[0] = int_t;
+		pts[1] = int_t;
 		AstNode* add_fn = make_typed_lambda({ "x", "y" }, pts, int_t, body);
-		AstNode* prog = make_typed_let("add", null, add_fn,
-			make_call(make_var("add"), { make_lit(mk_num(3.0)), make_lit(mk_num(4.0)) }));
+		AstNode* prog = make_typed_let(
+			"add",
+			null,
+			add_fn,
+			make_call(make_var("add"), { make_lit(mk_num(3.0)), make_lit(mk_num(4.0)) })
+		);
 		Value v = eval_surface(prog);
 		assert(v.type == NUMBER);
 		assert(v.num_val == 7.0);
 	};
 }
 
-fn void test_rung1_typed_function_bad() @test
-{
+fn void test_rung1_typed_function_bad() @test {
 	@pool() {
 		// add(3, "oops")  -> thrown
-		Type* int_t = mem::new(Type); *int_t = mk_tname("Int");
+		Type* int_t = mem::new(Type);
+		*int_t = mk_tname("Int");
 		AstNode* body = make_binop_node("+", make_var("x"), make_var("y"));
-		Type*[] pts = mem::new_array(Type*, 2);
-		pts[0] = int_t; pts[1] = int_t;
+		Type*[] pts   = mem::new_array(Type*, 2);
+		pts[0] = int_t;
+		pts[1] = int_t;
 		AstNode* add_fn = make_typed_lambda({ "x", "y" }, pts, int_t, body);
-		AstNode* prog = make_typed_let("add", null, add_fn,
-			make_call(make_var("add"), { make_lit(mk_num(3.0)), make_lit(mk_str("oops")) }));
+		AstNode* prog = make_typed_let(
+			"add",
+			null,
+			add_fn,
+			make_call(make_var("add"), { make_lit(mk_num(3.0)), make_lit(mk_str("oops")) })
+		);
 		// Should throw at the boundary.
-		AstNode* k = desugar(prog, null);
+		AstNode* k   = desugar(prog, null);
 		EvalResult r = eval(k, null);
 		assert(r.thrown, "expected type error to throw");
 	};
 }
 
-fn void test_rung1_typed_record_good() @test
-{
+fn void test_rung1_typed_record_good() @test {
 	@pool() {
 		// fn(p: {x:Int, y:Int}): Int { p.x + p.y }; f({x:3, y:4})  =>  7
-		Type* int_t = mem::new(Type); *int_t = mk_tname("Int");
-		Type pt = mk_trecord({ "x", "y" }, { *int_t, *int_t });
-		Type* pt_p = mem::new(Type); *pt_p = pt;
-		AstNode* body = make_binop_node("+",
+		Type* int_t = mem::new(Type);
+		*int_t = mk_tname("Int");
+		Type pt    = mk_trecord({ "x", "y" }, { *int_t, *int_t });
+		Type* pt_p = mem::new(Type);
+		*pt_p = pt;
+		AstNode* body = make_binop_node(
+			"+",
 			make_get(make_var("p"), make_lit(mk_str("x"))),
-			make_get(make_var("p"), make_lit(mk_str("y"))));
+			make_get(make_var("p"), make_lit(mk_str("y")))
+		);
 		Type*[] pts = mem::new_array(Type*, 1);
 		pts[0] = pt_p;
-		AstNode* f = make_typed_lambda({ "p" }, pts, int_t, body);
-		AstNode* arg = make_record({ "x", "y" }, { make_lit(mk_num(3.0)), make_lit(mk_num(4.0)) });
+		AstNode* f    = make_typed_lambda({ "p" }, pts, int_t, body);
+		AstNode* arg  = make_record({ "x", "y" }, { make_lit(mk_num(3.0)), make_lit(mk_num(4.0)) });
 		AstNode* prog = make_typed_let("f", null, f, make_call(make_var("f"), { arg }));
-		Value v = eval_surface(prog);
+		Value v       = eval_surface(prog);
 		assert(v.type == NUMBER);
 		assert(v.num_val == 7.0);
 	};
 }
 
-fn void test_rung1_typed_record_missing() @test
-{
+fn void test_rung1_typed_record_missing() @test {
 	@pool() {
 		// fn(p: {x:Int, y:Int}): Int { p.x + p.y }; f({x:3})  => throws
-		Type* int_t = mem::new(Type); *int_t = mk_tname("Int");
-		Type pt = mk_trecord({ "x", "y" }, { *int_t, *int_t });
-		Type* pt_p = mem::new(Type); *pt_p = pt;
-		AstNode* body = make_binop_node("+",
+		Type* int_t = mem::new(Type);
+		*int_t = mk_tname("Int");
+		Type pt    = mk_trecord({ "x", "y" }, { *int_t, *int_t });
+		Type* pt_p = mem::new(Type);
+		*pt_p = pt;
+		AstNode* body = make_binop_node(
+			"+",
 			make_get(make_var("p"), make_lit(mk_str("x"))),
-			make_get(make_var("p"), make_lit(mk_str("y"))));
+			make_get(make_var("p"), make_lit(mk_str("y")))
+		);
 		Type*[] pts = mem::new_array(Type*, 1);
 		pts[0] = pt_p;
-		AstNode* f = make_typed_lambda({ "p" }, pts, int_t, body);
-		AstNode* arg = make_record({ "x" }, { make_lit(mk_num(3.0)) });
+		AstNode* f    = make_typed_lambda({ "p" }, pts, int_t, body);
+		AstNode* arg  = make_record({ "x" }, { make_lit(mk_num(3.0)) });
 		AstNode* prog = make_typed_let("f", null, f, make_call(make_var("f"), { arg }));
-		AstNode* k = desugar(prog, null);
-		EvalResult r = eval(k, null);
+		AstNode* k    = desugar(prog, null);
+		EvalResult r  = eval(k, null);
 		assert(r.thrown, "expected type error to throw");
 	};
 }
 
-fn void test_rung2_sum_match() @test
-{
+fn void test_rung2_sum_match() @test {
 	@pool() {
 		// type Shape = Circle({radius:Int}) | Rectangle({w:Int,h:Int})
 		// area = fn(sh) { match sh { Circle(c) => 3*c.radius*c.radius
 		//                          Rectangle(r) => r.w * r.h } }
 		// area(Circle({radius:10})) + area(Rectangle({w:4, h:5}))  =>  320
-		Type* int_t = mem::new(Type); *int_t = mk_tname("Int");
-		AstNode* area = make_lambda({ "sh" },
+		Type* int_t = mem::new(Type);
+		*int_t = mk_tname("Int");
+		AstNode* area = make_lambda(
+			{ "sh" },
 			make_match(
 				make_var("sh"),
-				{ "Circle", "Rectangle" }, { "c", "r" },
+				{ "Circle", "Rectangle" },
+				{ "c", "r" },
 				{
-					make_binop_node("*",
-						make_binop_node("*", make_lit(mk_num(3.0)),
-							make_get(make_var("c"), make_lit(mk_str("radius")))),
-						make_get(make_var("c"), make_lit(mk_str("radius")))),
-					make_binop_node("*",
+					make_binop_node(
+						"*",
+						make_binop_node(
+							"*",
+							make_lit(mk_num(3.0)),
+							make_get(make_var("c"), make_lit(mk_str("radius")))
+						),
+						make_get(make_var("c"), make_lit(mk_str("radius")))
+					),
+					make_binop_node(
+						"*",
 						make_get(make_var("r"), make_lit(mk_str("w"))),
-						make_get(make_var("r"), make_lit(mk_str("h")))),
-				}));
-		AstNode* c1 = make_call(make_var("area"),
-			{ make_construct("Circle", make_record({ "radius" }, { make_lit(mk_num(10.0)) })) });
-		AstNode* c2 = make_call(make_var("area"),
-			{ make_construct("Rectangle", make_record({ "w", "h" }, { make_lit(mk_num(4.0)), make_lit(mk_num(5.0)) })) });
-		AstNode* prog = make_typed_let("area", null, area,
-			make_binop_node("+", c1, c2));
+						make_get(make_var("r"), make_lit(mk_str("h")))
+					),
+				}
+			)
+		);
+		AstNode* c1 = make_call(
+			make_var("area"),
+			{ make_construct("Circle", make_record({ "radius" }, { make_lit(mk_num(10.0)) })) }
+		);
+		AstNode* c2 = make_call(
+			make_var("area"),
+			{ make_construct("Rectangle", make_record({ "w", "h" }, { make_lit(mk_num(4.0)), make_lit(mk_num(5.0)) })) }
+		);
+		AstNode* prog = make_typed_let("area", null, area, make_binop_node("+", c1, c2));
 		Value v = eval_surface(prog);
 		assert(v.type == NUMBER);
 		assert(v.num_val == 320.0);
 	};
 }
 
-fn void test_rung2_match_non_exhaustive() @test
-{
+fn void test_rung2_match_non_exhaustive() @test {
 	@pool() {
 		// Same area function as above, but call with a Triangle -> throws
-		Type* int_t = mem::new(Type); *int_t = mk_tname("Int");
-		AstNode* area = make_lambda({ "sh" },
+		Type* int_t = mem::new(Type);
+		*int_t = mk_tname("Int");
+		AstNode* area = make_lambda(
+			{ "sh" },
 			make_match(
 				make_var("sh"),
-				{ "Circle", "Rectangle" }, { "c", "r" },
-				{
-					make_lit(mk_num(1.0)),
-					make_lit(mk_num(1.0)),
-				}));
-		AstNode* prog = make_typed_let("area", null, area,
-			make_call(make_var("area"),
-				{ make_construct("Triangle", make_record({ "base" }, { make_lit(mk_num(2.0)) })) }));
-		AstNode* k = desugar(prog, null);
+				{ "Circle", "Rectangle" },
+				{ "c", "r" },
+				{ make_lit(mk_num(1.0)), make_lit(mk_num(1.0)), }
+			)
+		);
+		AstNode* prog = make_typed_let(
+			"area",
+			null,
+			area,
+			make_call(
+				make_var("area"),
+				{ make_construct("Triangle", make_record({ "base" }, { make_lit(mk_num(2.0)) })) }
+			)
+		);
+		AstNode* k   = desugar(prog, null);
 		EvalResult r = eval(k, null);
 		assert(r.thrown, "expected non-exhaustive match to throw");
 	};
