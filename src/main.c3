@@ -1,6 +1,7 @@
 module engine;
 import std::io;
 import std::collections;
+import std::collections::map;
 import std::core::dstring;
 
 // ============================================================================
@@ -208,16 +209,14 @@ struct AstNode
 // ============================================================================
 // ENVIRONMENT (lexical scope, parent chain)
 // ============================================================================
-
-struct Binding
-{
-	String name;
-	Value value;
-}
+//
+// Each Env carries a HashMap{String, Value} for O(1) name lookup.  The HashMap
+// is heap-allocated and initialized with the heap allocator; we don't free it
+// (per the current --test-noleak policy — refcounting lands with the VM).
 
 struct Env
 {
-	Binding[] bindings;
+	HashMap{String, Value}* map;
 	Env* parent;
 }
 
@@ -518,13 +517,12 @@ fn Env* env_extend(Env* parent, String[] names, Value[] values)
 {
 	Env* e = mem::new(Env);
 	e.parent = parent;
-	Binding[] b = mem::new_array(Binding, names.len);
+	e.map = mem::new(HashMap{String, Value});
+	e.map.init(mem);
 	for (int i = 0; i < names.len; i++)
 	{
-		b[i].name = names[i];
-		b[i].value = values[i];
+		e.map.set(names[i], values[i]);
 	}
-	e.bindings = b;
 	return e;
 }
 
@@ -532,10 +530,9 @@ fn Env* env_define(Env* parent, String name, Value v)
 {
 	Env* e = mem::new(Env);
 	e.parent = parent;
-	Binding[] b = mem::new_array(Binding, 1);
-	b[0].name = name;
-	b[0].value = v;
-	e.bindings = b;
+	e.map = mem::new(HashMap{String, Value});
+	e.map.init(mem);
+	e.map.set(name, v);
 	return e;
 }
 
@@ -544,13 +541,10 @@ fn Value env_lookup(Env* env, String name, bool* found = null)
 	Env* cur = env;
 	while (cur != null)
 	{
-		foreach (&b : cur.bindings)
+		if (try v = cur.map.get(name))
 		{
-			if (b.name == name)
-			{
-				if (found != null) *found = true;
-				return b.value;
-			}
+			if (found != null) *found = true;
+			return v;
 		}
 		cur = cur.parent;
 	}
@@ -563,16 +557,12 @@ fn void env_set(Env* env, String name, Value v)
 	Env* cur = env;
 	while (cur != null)
 	{
-		foreach (&b : cur.bindings)
-		{
-			if (b.name == name) { b.value = v; return; }
-		}
+		if (cur.map.has_key(name)) { cur.map.set(name, v); return; }
 		cur = cur.parent;
 	}
-	// Unbound assignment: create a binding on the innermost scope, matching JS-y
+	// Unbound assignment: set adds to the innermost scope, matching JS-y
 	// "set adds" behavior so things don't disappear silently.
-	env.bindings = mem::new_array(Binding, env.bindings.len + 1);
-	env.bindings[env.bindings.len - 1] = { .name = name, .value = v };
+	env.map.set(name, v);
 }
 
 // ============================================================================
@@ -1302,7 +1292,7 @@ fn EvalResult eval(AstNode* node, Env* env)
 			EvalResult init = eval(node.children[0], rec);
 			if (init.thrown) return init;
 			// Patch the binding with the actual value so the closure can see itself.
-			rec.bindings[0].value = init.value;
+			rec.map.set(node.name, init.value);
 			return eval(node.children[1], rec);
 		}
 		case SEQ:
