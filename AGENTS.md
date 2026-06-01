@@ -19,17 +19,9 @@ c3c compile-run src/main.c3  # Compile and run single file
 
 Output binary: `build/engine`
 
-## Architecture
+## Syntax
 
-Two-layer pipeline (matching reference implementation):
-
-```
-Surface AST  →  desugar()  →  Kernel AST  →  eval()
-```
-
-**Surface nodes** (~17): Lit, Var, Lambda, Call, If, Let, Seq, BinOp, Record, ArrayLit, Get, Set, MethodCall, Throw, Try, TypeDef, Construct, Match
-
-**Kernel nodes** (~13): Lit, Var, Lambda, Call, If, Get, Set, Record, ArrayLit, Throw, Try, Prim, LetRec
+Javascript-like. No ASI. 
 
 ## Project Structure
 
@@ -42,25 +34,9 @@ docs/high-level-plan.md - Full language specification and design invariants
 
 ## Key Design Decisions (from reference)
 
-### LetRec, not Call-of-Lambda
-
-The plan says `Let` lowers to `Call(Lambda(...), ...)`, but the implementation uses `LetRec`. This is because `Call-of-Lambda` evaluates the initializer in the outer env, so a function can't see itself (no recursion). `LetRec` defines the name first (as placeholder), evaluates init in that env, then patches the binding.
-
 ### Lambda annotations desugar to runtime boundary checks
 
 Type annotations on Lambdas are stripped during desugaring and replaced with `If(Call(Prim is_*, [x]), x, Throw(...))` wrappers. The evaluator never sees types.
-
-### Construct/Match use record fields `__tag` and `__val`
-
-Tagged unions are records: `Construct("Circle", expr)` → `Record([("__tag", "Circle"), ("__val", expr)])`. Match generates an If-chain comparing `Get(s, "__tag")` against each branch tag.
-
-### Primitives are callable values
-
-`Prim` nodes wrap into `("__prim__", name)` tuples when evaluated. `apply_fn` checks for this prefix to dispatch to `PRIMS` dict.
-
-### Truthiness
-
-`_truthy(v)` = `v is not None and v is not False`. Everything else is truthy (including `0`, `""`, `[]`). Matches Lua, not Python.
 
 ### `===` is strict equality
 
@@ -69,35 +45,6 @@ Tagged unions are records: `Construct("Circle", expr)` → `Record([("__tag", "C
 ### Set is an expression
 
 `Set` returns the value being assigned, like Rust. Loops-for-effect return `Nil`.
-
-## C3-Specific Patterns
-
-### Enum values
-
-When the type is known from context (struct field, function parameter), use bare enum value:
-```c3
-return { .type = NIL };  // NOT ValueType::NIL
-```
-
-### Struct initialization
-```c3
-Value v = { .type = NIL, .num_val = 0.0 };
-```
-
-### Memory management
-
-Manual with three tiers:
-1. Stack (default for local fixed-size)
-2. Heap: `mem::new(T)`, `mem::free(p)`
-3. Temp allocator: `@pool() { ... }` block
-
-### Error handling
-
-Use Optional types (`T?`) with faults, not exceptions:
-```c3
-faultdef UNBOUND_VAR;
-fn Value? env_lookup(Env* env, String name) { ... return UNBOUND_VAR~; }
-```
 
 ## Value Universe
 
