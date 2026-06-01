@@ -84,6 +84,9 @@ enum NodeType : char
 	TRY,
 	PRIM,
 	LETREC,
+	SEQ,        // surface: sequential evaluation; desugars to ignored-binding lambdas
+	BINOP,      // surface: operator call; desugars to Call(Prim(op), [a, b])
+	METHODCALL, // surface: recv.m(args); desugars to Lambda-bind-r + Get+Call
 }
 
 struct AstNode
@@ -162,9 +165,13 @@ fn AstNode* make_var(String name)
 
 fn AstNode* make_lambda(String[] params, AstNode* body)
 {
+	// Copy `params` to heap — the caller's slice literal `{ "x", "y" }` is a
+	// stack temp and would dangle once we return.
 	AstNode* n = mem::new(AstNode);
 	n.type = LAMBDA;
-	n.names = params;
+	String[] heap_params = mem::new_array(String, params.len);
+	for (int i = 0; i < params.len; i++) heap_params[i] = params[i];
+	n.names = heap_params;
 	AstNode*[] kids = mem::new_array(AstNode*, 1);
 	kids[0] = body;
 	n.children = kids;
@@ -195,9 +202,12 @@ fn AstNode* make_if(AstNode* c, AstNode* t, AstNode* e)
 fn AstNode* make_record(String[] keys, AstNode*[] vals)
 {
 	assert(keys.len == vals.len);
+	// Same heap-copy rationale as make_lambda: `keys` is usually a stack temp.
 	AstNode* n = mem::new(AstNode);
 	n.type = RECORD;
-	n.names = keys;
+	String[] heap_keys = mem::new_array(String, keys.len);
+	for (int i = 0; i < keys.len; i++) heap_keys[i] = keys[i];
+	n.names = heap_keys;
 	n.children = vals;
 	return n;
 }
@@ -266,6 +276,37 @@ fn AstNode* make_letrec(String name, AstNode* init, AstNode* body)
 	n.name = name;
 	AstNode*[] kids = mem::new_array(AstNode*, 2);
 	kids[0] = init; kids[1] = body;
+	n.children = kids;
+	return n;
+}
+
+fn AstNode* make_seq(AstNode*[] exprs)
+{
+	AstNode* n = mem::new(AstNode);
+	n.type = SEQ;
+	n.children = exprs;
+	return n;
+}
+
+fn AstNode* make_binop_node(String op, AstNode* lhs, AstNode* rhs)
+{
+	AstNode* n = mem::new(AstNode);
+	n.type = BINOP;
+	n.name = op;
+	AstNode*[] kids = mem::new_array(AstNode*, 2);
+	kids[0] = lhs; kids[1] = rhs;
+	n.children = kids;
+	return n;
+}
+
+fn AstNode* make_methodcall(AstNode* recv, String name, AstNode*[] args)
+{
+	AstNode* n = mem::new(AstNode);
+	n.type = METHODCALL;
+	n.name = name;
+	AstNode*[] kids = mem::new_array(AstNode*, args.len + 1);
+	kids[0] = recv;
+	for (int i = 0; i < args.len; i++) kids[i + 1] = args[i];
 	n.children = kids;
 	return n;
 }
@@ -552,6 +593,124 @@ fn EvalResult prim_dispatch(String name, Value[] args)
 }
 
 // ============================================================================
+// DESUGARER (surface -> kernel)
+// ============================================================================
+//
+// Steps 3-5 of the build order are pure front-end desugaring.  The kernel
+// evaluator below never sees SEQ, BINOP, or METHODCALL because they are
+// rewritten into the existing kernel nodes.  Rung 1 (type annotations) and
+// Rung 2 (Construct/Match) are handled in later steps.
+
+fn AstNode* desugar_seq_kids(AstNode*[] exprs)
+{
+	// Seq([a, b, ...])   =>   Call(Lambda(["_"], rest), [a])
+	// with the base case Seq([]) => Lit(nil), Seq([a]) => desugar(a).
+	if (exprs.len == 0) return make_lit(mk_nil());
+	if (exprs.len == 1) return desugar(exprs[0]);
+	AstNode* head = desugar(exprs[0]);
+	AstNode*[] rest = mem::new_array(AstNode*, exprs.len - 1);
+	for (int i = 1; i < exprs.len; i++) rest[i - 1] = exprs[i];
+	return make_call(make_lambda({ "_" }, desugar_seq_kids(rest)), { head });
+}
+
+// Desugar every child of an already-kernel node, then rebuild it.
+fn AstNode* desugar_with_kids(NodeType t, AstNode*[] kids)
+{
+	AstNode*[] out = mem::new_array(AstNode*, kids.len);
+	for (int i = 0; i < kids.len; i++) out[i] = desugar(kids[i]);
+	AstNode* n = mem::new(AstNode);
+	n.type = t;
+	n.children = out;
+	return n;
+}
+
+fn AstNode* desugar(AstNode* e)
+{
+	switch (e.type)
+	{
+		case LIT:
+		case VAR:
+		case PRIM:
+			return e;
+		case LAMBDA:
+		{
+			// A lambda's body might be a SEQ or other surface form; desugar it.
+			AstNode* n = mem::new(AstNode);
+			n.type = LAMBDA;
+			n.names = e.names;
+			AstNode*[] kids = mem::new_array(AstNode*, e.children.len);
+			for (int i = 0; i < e.children.len; i++) kids[i] = desugar(e.children[i]);
+			n.children = kids;
+			return n;
+		}
+		case CALL:    return desugar_with_kids(CALL, e.children);
+		case IF:      return desugar_with_kids(IF, e.children);
+		case GET:     return desugar_with_kids(GET, e.children);
+		case SET:     return desugar_with_kids(SET, e.children);
+		case RECORD:
+		{
+			// Record has parallel `names` and `children`; desugar children only.
+			AstNode* n = mem::new(AstNode);
+			n.type = RECORD;
+			n.names = e.names;
+			AstNode*[] out = mem::new_array(AstNode*, e.children.len);
+			for (int i = 0; i < e.children.len; i++) out[i] = desugar(e.children[i]);
+			n.children = out;
+			return n;
+		}
+		case ARRAY_LIT: return desugar_with_kids(ARRAY_LIT, e.children);
+		case THROW:     return desugar_with_kids(THROW, e.children);
+		case TRY:
+		{
+			AstNode* n = mem::new(AstNode);
+			n.type = TRY;
+			n.name = e.name;
+			AstNode*[] out = mem::new_array(AstNode*, e.children.len);
+			for (int i = 0; i < e.children.len; i++) out[i] = desugar(e.children[i]);
+			n.children = out;
+			return n;
+		}
+		case LETREC:
+		{
+			AstNode* n = mem::new(AstNode);
+			n.type = LETREC;
+			n.name = e.name;
+			AstNode*[] out = mem::new_array(AstNode*, e.children.len);
+			for (int i = 0; i < e.children.len; i++) out[i] = desugar(e.children[i]);
+			n.children = out;
+			return n;
+		}
+		case SEQ:
+			return desugar_seq_kids(e.children);
+		case BINOP:
+		{
+			// BinOp(op, lhs, rhs)  =>  Call(Prim(op), [lhs', rhs'])
+			AstNode* lhs = desugar(e.children[0]);
+			AstNode* rhs = desugar(e.children[1]);
+			return make_call(make_prim_node(e.name), { lhs, rhs });
+		}
+		case METHODCALL:
+		{
+			// recv.m(args)  =>  Call(Lambda([r], Call(Get(Var r, m), [Var r, ...args])), [recv])
+			// The receiver is bound once; the field lookup runs once; the call passes
+			// the receiver as explicit self.  Matches the Go-style / reference design.
+			String m = e.name;
+			AstNode* recv = desugar(e.children[0]);
+			AstNode*[] args = mem::new_array(AstNode*, e.children.len - 1);
+			for (int i = 1; i < e.children.len; i++) args[i - 1] = desugar(e.children[i]);
+			AstNode*[] call_args = mem::new_array(AstNode*, args.len + 1);
+			call_args[0] = make_var("r");
+			for (int i = 0; i < args.len; i++) call_args[i + 1] = args[i];
+			AstNode* get = make_get(make_var("r"), make_lit(mk_str(m)));
+			AstNode* call = make_call(get, call_args);
+			AstNode* lam = make_lambda({ "r" }, call);
+			return make_call(lam, { recv });
+		}
+	}
+	return e;
+}
+
+// ============================================================================
 // APPLY
 // ============================================================================
 
@@ -774,6 +933,10 @@ fn EvalResult eval(AstNode* node, Env* env)
 			rec.bindings[0].value = init.value;
 			return eval(node.children[1], rec);
 		}
+		case SEQ:
+		case BINOP:
+		case METHODCALL:
+			return { .thrown = true, .value = mk_str("eval: surface node reached the kernel; desugar first") };
 	}
 	return { .thrown = true, .value = mk_str("unknown node") };
 }

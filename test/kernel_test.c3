@@ -15,6 +15,14 @@ fn Value eval_value(AstNode* node)
 	return r.value;
 }
 
+fn Value eval_surface(AstNode* node)
+{
+	AstNode* k = desugar(node);
+	EvalResult r = eval(k, null);
+	assert(!r.thrown, "desugared program threw");
+	return r.value;
+}
+
 // ============================================================================
 // TESTS — port of reference/test.py sections 1, 2, 3, 5, 7.
 // Sections 4, 6, 8 need the desugarer (build-order steps 3-5).
@@ -259,5 +267,85 @@ fn void test_prim_len_array() @test
 		AstNode* arr = make_array({ make_lit(mk_num(1.0)), make_lit(mk_num(2.0)), make_lit(mk_num(3.0)) });
 		AstNode* prog = make_call(make_prim_node("len"), { arr });
 		assert(eval_value(prog).num_val == 3.0);
+	};
+}
+
+// ============================================================================
+// SURFACE (desugarer) tests — build-order step 3: MethodCall + Seq + BinOp
+// ============================================================================
+
+fn void test_surface_binop() @test
+{
+	@pool() {
+		// 3 + 4 * 2   (surface BinOp, not pre-desugared Call)
+		AstNode* prog = make_binop_node("+",
+			make_lit(mk_num(3.0)),
+			make_binop_node("*", make_lit(mk_num(4.0)), make_lit(mk_num(2.0))));
+		Value v = eval_surface(prog);
+		assert(v.type == NUMBER);
+		assert(v.num_val == 11.0);
+	};
+}
+
+fn void test_surface_seq() @test
+{
+	@pool() {
+		// 1; 2; 3   =>  3
+		AstNode* prog = make_seq({
+			make_lit(mk_num(1.0)),
+			make_lit(mk_num(2.0)),
+			make_lit(mk_num(3.0)),
+		});
+		Value v = eval_surface(prog);
+		assert(v.type == NUMBER);
+		assert(v.num_val == 3.0);
+	};
+}
+
+fn void test_surface_methodcall_counter() @test
+{
+	@pool() {
+		// let counter = { count: 0,
+		//                 inc: fn(self, n) { self.count = self.count + n } };
+		// counter.inc(5); counter.inc(10); counter.count    =>  15
+		AstNode* inc_fn = make_lambda({ "self", "n" },
+			make_set(make_var("self"), make_lit(mk_str("count")),
+				make_binop_node("+",
+					make_get(make_var("self"), make_lit(mk_str("count"))),
+					make_var("n"))));
+		AstNode* counter_init = make_record({ "count", "inc" },
+			{ make_lit(mk_num(0.0)), inc_fn });
+		AstNode* stmt1 = make_methodcall(make_var("counter"), "inc", { make_lit(mk_num(5.0)) });
+		AstNode* stmt2 = make_methodcall(make_var("counter"), "inc", { make_lit(mk_num(10.0)) });
+		AstNode* final = make_get(make_var("counter"), make_lit(mk_str("count")));
+		AstNode* body = make_seq({ stmt1, stmt2, final });
+		AstNode* prog = make_letrec("counter", counter_init, body);
+		Value v = eval_surface(prog);
+		assert(v.type == NUMBER);
+		assert(v.num_val == 15.0);
+	};
+}
+
+fn void test_surface_methodcall_receiver_once() @test
+{
+	@pool() {
+		// r = { hits: 0, bump: fn(self) { self.hits = self.hits + 1; self.hits } };
+		// r.bump(); r.bump()   =>  2  (each call evaluates the receiver exactly once)
+		AstNode* bump_fn = make_lambda({ "self" },
+			make_seq({
+				make_set(make_var("self"), make_lit(mk_str("hits")),
+					make_binop_node("+",
+						make_get(make_var("self"), make_lit(mk_str("hits"))),
+						make_lit(mk_num(1.0)))),
+				make_get(make_var("self"), make_lit(mk_str("hits"))),
+			}));
+		AstNode* r_init = make_record({ "hits", "bump" },
+			{ make_lit(mk_num(0.0)), bump_fn });
+		AstNode* b1 = make_methodcall(make_var("r"), "bump", {});
+		AstNode* b2 = make_methodcall(make_var("r"), "bump", {});
+		AstNode* prog = make_letrec("r", r_init, make_seq({ b1, b2 }));
+		Value v = eval_surface(prog);
+		assert(v.type == NUMBER);
+		assert(v.num_val == 2.0);
 	};
 }

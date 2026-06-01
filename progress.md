@@ -41,9 +41,36 @@ sections 1, 2, 3, 5, 7 (the ones the kernel can answer directly).
 
 ### Next (in build order)
 
-- [ ] B. Port the reference test cases to C3 unit tests  *(done for kernel; desugarer tests still missing)*
-- [ ] C. Arrays + records dispatch  *(done in eval)*
-- [ ] D. **Method-call desugaring (front-end only)** ← *next*
-- [ ] E. Rung 1 type-check desugaring
+- [x] B. Port the reference test cases to C3 unit tests  *(done for kernel)*
+- [x] C. Arrays + records dispatch  *(done in eval)*
+- [x] D. **Method-call desugaring (front-end only)** ← *just landed (24 tests, all pass)*
+- [ ] E. Rung 1 type-check desugaring ← *next*
 - [ ] F. Rung 2 type table, Construct, match
 - [ ] G. Bytecode compiler + VM (upvalue closing, TAILCALL)
+
+### Step D details
+
+- New surface node types: `SEQ`, `BINOP`, `METHODCALL`
+- `BinOp(op, a, b)`           → `Call(Prim(op), [a, b])`
+- `Seq([a, b, ...])`          → `Call(Lambda(["_"], rest), [a])` (right-fold)
+- `MethodCall(r, m, args)`    → `Call(Lambda(["r"], Call(Get(r, m), [r, ...args])), [r])`
+  (receiver bound once, field lookup runs once, receiver passed as explicit self)
+- The desugarer descends into children of every node — **including `LAMBDA`**
+  (its body might itself be a `SEQ`).
+
+### New gotcha (Step D)
+
+- **Slice literal as function argument that the function stores.**
+  `make_lambda({ "x" }, body)` makes a `String[]` stack temp; the temp
+  lives only until `make_lambda` returns. If `make_lambda` copies the
+  slice's (ptr, len) into a heap struct field (which it must, since the
+  AST outlives the call), the copy points at freed stack. The same trap
+  applies to `make_record({...}, ...)`. **Both now heap-copy their slice
+  argument on entry.**
+
+### Memory note
+
+- Switched `mem::tnew` → `mem::new` everywhere in the kernel because the
+  temp arena reallocates on growth, which invalidates every pointer that
+  lives in it. We pay for the leak detection (run with `c3c test --test-noleak`)
+  until refcounting lands with the bytecode VM.
