@@ -43,10 +43,10 @@ sections 1, 2, 3, 5, 7 (the ones the kernel can answer directly).
 
 - [x] B. Port the reference test cases to C3 unit tests  *(done for kernel)*
 - [x] C. Arrays + records dispatch  *(done in eval)*
-- [x] D. **Method-call desugaring (front-end only)** ← *just landed (24 tests, all pass)*
-- [ ] E. Rung 1 type-check desugaring ← *next*
-- [ ] F. Rung 2 type table, Construct, match
-- [ ] G. Bytecode compiler + VM (upvalue closing, TAILCALL)
+- [x] D. **Method-call desugaring (front-end only)** ← landed
+- [x] E. **Rung 1 type-check desugaring** ← just landed (30 tests, all pass)
+- [x] F. **Rung 2 type table, Construct, match** ← just landed (30 tests, all pass)
+- [ ] G. Bytecode compiler + VM (upvalue closing, TAILCALL) ← *next*
 
 ### Step D details
 

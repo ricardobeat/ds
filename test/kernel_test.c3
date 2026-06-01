@@ -17,7 +17,7 @@ fn Value eval_value(AstNode* node)
 
 fn Value eval_surface(AstNode* node)
 {
-	AstNode* k = desugar(node);
+	AstNode* k = desugar(node, null);
 	EvalResult r = eval(k, null);
 	assert(!r.thrown, "desugared program threw");
 	return r.value;
@@ -347,5 +347,215 @@ fn void test_surface_methodcall_receiver_once() @test
 		Value v = eval_surface(prog);
 		assert(v.type == NUMBER);
 		assert(v.num_val == 2.0);
+	};
+}
+
+// ============================================================================
+// RUNG 1 / RUNG 2 surface tests
+//   Section 5/5b: typed function, good + bad call
+//   Section 6/6b: sum type + match
+//   Section 8: typed record check
+// ============================================================================
+
+fn AstNode* make_typed_lambda(String[] names, Type*[] param_types, Type* ret_type, AstNode* body)
+{
+	AstNode* n = mem::new(AstNode);
+	n.type = LAMBDA_T;
+	String[] heap_names = mem::new_array(String, names.len);
+	for (int i = 0; i < names.len; i++) heap_names[i] = names[i];
+	n.names = heap_names;
+	n.param_types = param_types;
+	n.ret_type = ret_type;
+	AstNode*[] kids = mem::new_array(AstNode*, 1);
+	kids[0] = body;
+	n.children = kids;
+	return n;
+}
+
+fn AstNode* make_typed_let(String name, Type* ann_type, AstNode* init, AstNode* body)
+{
+	AstNode* n = mem::new(AstNode);
+	n.type = LET_T;
+	n.name = name;
+	n.ann_type = ann_type;
+	AstNode*[] kids = mem::new_array(AstNode*, 2);
+	kids[0] = init; kids[1] = body;
+	n.children = kids;
+	return n;
+}
+
+fn AstNode* make_typedef(String name, Type* t, AstNode* body)
+{
+	AstNode* n = mem::new(AstNode);
+	n.type = TYPEDEF;
+	n.name = name;
+	n.ret_type = t;
+	AstNode*[] kids = mem::new_array(AstNode*, 1);
+	kids[0] = body;
+	n.children = kids;
+	return n;
+}
+
+fn AstNode* make_construct(String tag, AstNode* val)
+{
+	AstNode* n = mem::new(AstNode);
+	n.type = CONSTRUCT;
+	n.name = tag;
+	AstNode*[] kids = mem::new_array(AstNode*, 1);
+	kids[0] = val;
+	n.children = kids;
+	return n;
+}
+
+fn AstNode* make_match(AstNode* scrut, String[] tags, String[] binds, AstNode*[] bodies)
+{
+	assert(tags.len == binds.len);
+	assert(tags.len == bodies.len);
+	AstNode* n = mem::new(AstNode);
+	n.type = MATCH;
+	// Encode: children = [scrut, body0, body1, ...], names = [tag0, bind0, tag1, bind1, ...]
+	String[] nm = mem::new_array(String, 2 * tags.len);
+	AstNode*[] kids = mem::new_array(AstNode*, bodies.len + 1);
+	kids[0] = scrut;
+	for (int i = 0; i < tags.len; i++)
+	{
+		nm[2 * i] = tags[i];
+		nm[2 * i + 1] = binds[i];
+		kids[i + 1] = bodies[i];
+	}
+	n.names = nm;
+	n.children = kids;
+	return n;
+}
+
+fn void test_rung1_typed_function_good() @test
+{
+	@pool() {
+		// let add = fn(x: Int, y: Int): Int { x + y }; add(3, 4)  =>  7
+		Type* int_t = mem::new(Type); *int_t = mk_tname("Int");
+		AstNode* body = make_binop_node("+", make_var("x"), make_var("y"));
+		Type*[] pts = mem::new_array(Type*, 2);
+		pts[0] = int_t; pts[1] = int_t;
+		AstNode* add_fn = make_typed_lambda({ "x", "y" }, pts, int_t, body);
+		AstNode* prog = make_typed_let("add", null, add_fn,
+			make_call(make_var("add"), { make_lit(mk_num(3.0)), make_lit(mk_num(4.0)) }));
+		Value v = eval_surface(prog);
+		assert(v.type == NUMBER);
+		assert(v.num_val == 7.0);
+	};
+}
+
+fn void test_rung1_typed_function_bad() @test
+{
+	@pool() {
+		// add(3, "oops")  -> thrown
+		Type* int_t = mem::new(Type); *int_t = mk_tname("Int");
+		AstNode* body = make_binop_node("+", make_var("x"), make_var("y"));
+		Type*[] pts = mem::new_array(Type*, 2);
+		pts[0] = int_t; pts[1] = int_t;
+		AstNode* add_fn = make_typed_lambda({ "x", "y" }, pts, int_t, body);
+		AstNode* prog = make_typed_let("add", null, add_fn,
+			make_call(make_var("add"), { make_lit(mk_num(3.0)), make_lit(mk_str("oops")) }));
+		// Should throw at the boundary.
+		AstNode* k = desugar(prog, null);
+		EvalResult r = eval(k, null);
+		assert(r.thrown, "expected type error to throw");
+	};
+}
+
+fn void test_rung1_typed_record_good() @test
+{
+	@pool() {
+		// fn(p: {x:Int, y:Int}): Int { p.x + p.y }; f({x:3, y:4})  =>  7
+		Type* int_t = mem::new(Type); *int_t = mk_tname("Int");
+		Type pt = mk_trecord({ "x", "y" }, { *int_t, *int_t });
+		Type* pt_p = mem::new(Type); *pt_p = pt;
+		AstNode* body = make_binop_node("+",
+			make_get(make_var("p"), make_lit(mk_str("x"))),
+			make_get(make_var("p"), make_lit(mk_str("y"))));
+		Type*[] pts = mem::new_array(Type*, 1);
+		pts[0] = pt_p;
+		AstNode* f = make_typed_lambda({ "p" }, pts, int_t, body);
+		AstNode* arg = make_record({ "x", "y" }, { make_lit(mk_num(3.0)), make_lit(mk_num(4.0)) });
+		AstNode* prog = make_typed_let("f", null, f, make_call(make_var("f"), { arg }));
+		Value v = eval_surface(prog);
+		assert(v.type == NUMBER);
+		assert(v.num_val == 7.0);
+	};
+}
+
+fn void test_rung1_typed_record_missing() @test
+{
+	@pool() {
+		// fn(p: {x:Int, y:Int}): Int { p.x + p.y }; f({x:3})  => throws
+		Type* int_t = mem::new(Type); *int_t = mk_tname("Int");
+		Type pt = mk_trecord({ "x", "y" }, { *int_t, *int_t });
+		Type* pt_p = mem::new(Type); *pt_p = pt;
+		AstNode* body = make_binop_node("+",
+			make_get(make_var("p"), make_lit(mk_str("x"))),
+			make_get(make_var("p"), make_lit(mk_str("y"))));
+		Type*[] pts = mem::new_array(Type*, 1);
+		pts[0] = pt_p;
+		AstNode* f = make_typed_lambda({ "p" }, pts, int_t, body);
+		AstNode* arg = make_record({ "x" }, { make_lit(mk_num(3.0)) });
+		AstNode* prog = make_typed_let("f", null, f, make_call(make_var("f"), { arg }));
+		AstNode* k = desugar(prog, null);
+		EvalResult r = eval(k, null);
+		assert(r.thrown, "expected type error to throw");
+	};
+}
+
+fn void test_rung2_sum_match() @test
+{
+	@pool() {
+		// type Shape = Circle({radius:Int}) | Rectangle({w:Int,h:Int})
+		// area = fn(sh) { match sh { Circle(c) => 3*c.radius*c.radius
+		//                          Rectangle(r) => r.w * r.h } }
+		// area(Circle({radius:10})) + area(Rectangle({w:4, h:5}))  =>  320
+		Type* int_t = mem::new(Type); *int_t = mk_tname("Int");
+		AstNode* area = make_lambda({ "sh" },
+			make_match(
+				make_var("sh"),
+				{ "Circle", "Rectangle" }, { "c", "r" },
+				{
+					make_binop_node("*",
+						make_binop_node("*", make_lit(mk_num(3.0)),
+							make_get(make_var("c"), make_lit(mk_str("radius")))),
+						make_get(make_var("c"), make_lit(mk_str("radius")))),
+					make_binop_node("*",
+						make_get(make_var("r"), make_lit(mk_str("w"))),
+						make_get(make_var("r"), make_lit(mk_str("h")))),
+				}));
+		AstNode* c1 = make_call(make_var("area"),
+			{ make_construct("Circle", make_record({ "radius" }, { make_lit(mk_num(10.0)) })) });
+		AstNode* c2 = make_call(make_var("area"),
+			{ make_construct("Rectangle", make_record({ "w", "h" }, { make_lit(mk_num(4.0)), make_lit(mk_num(5.0)) })) });
+		AstNode* prog = make_typed_let("area", null, area,
+			make_binop_node("+", c1, c2));
+		Value v = eval_surface(prog);
+		assert(v.type == NUMBER);
+		assert(v.num_val == 320.0);
+	};
+}
+
+fn void test_rung2_match_non_exhaustive() @test
+{
+	@pool() {
+		// Same area function as above, but call with a Triangle -> throws
+		Type* int_t = mem::new(Type); *int_t = mk_tname("Int");
+		AstNode* area = make_lambda({ "sh" },
+			make_match(
+				make_var("sh"),
+				{ "Circle", "Rectangle" }, { "c", "r" },
+				{
+					make_lit(mk_num(1.0)),
+					make_lit(mk_num(1.0)),
+				}));
+		AstNode* prog = make_typed_let("area", null, area,
+			make_call(make_var("area"),
+				{ make_construct("Triangle", make_record({ "base" }, { make_lit(mk_num(2.0)) })) }));
+		AstNode* k = desugar(prog, null);
+		EvalResult r = eval(k, null);
+		assert(r.thrown, "expected non-exhaustive match to throw");
 	};
 }

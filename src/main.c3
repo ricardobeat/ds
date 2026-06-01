@@ -4,8 +4,97 @@ import std::collections;
 import std::core::dstring;
 
 // ============================================================================
-// VALUE UNIVERSE
+// TYPES (Rung 1 + Rung 2 surface types)
 // ============================================================================
+//
+// Types exist only at desugar time.  They never reach the kernel evaluator.
+// `TName` is a name; we look it up in `tenv` (compile-time table populated by
+// `TypeDef`).  `TRecord` and `TSum` carry parallel key/type arrays.
+//
+// The lowerings:
+//   check(T, e)   = If(is_T(e), e, Throw("type error"))
+//   Construct(t, v) = Record([("__tag", Lit t), ("__val", v)])
+//   Match(s, [...]) = If-chain on Get(s, "__tag"), each branch binding "__val"
+
+enum TypeKind : char { TNAME, TARRAY, TRECORD, TSUM }
+
+struct Type
+{
+	TypeKind kind;
+	String name;        // TName
+	Type* elem;          // TArray  (heap, not by value: avoids recursive struct)
+	String[] keys;       // TRecord field names / TSum tag names
+	Type*[] types;       // TRecord field types / TSum tag types (pointers to avoid recursion)
+}
+
+fn Type mk_tname(String n)
+{
+	Type t;
+	t.kind = TNAME;
+	t.name = n;
+	return t;
+}
+
+fn Type mk_tarray(Type e)
+{
+	Type t;
+	t.kind = TARRAY;
+	Type* p = mem::new(Type);
+	*p = e;
+	t.elem = p;
+	return t;
+}
+
+fn Type mk_trecord(String[] ks, Type[] ts)
+{
+	assert(ks.len == ts.len);
+	Type t;
+	t.kind = TRECORD;
+	t.keys = ks;
+	Type*[] ps = mem::new_array(Type*, ts.len);
+	for (int i = 0; i < ts.len; i++)
+	{
+		ps[i] = mem::new(Type);
+		*ps[i] = ts[i];
+	}
+	t.types = ps;
+	return t;
+}
+
+fn Type mk_tsum(String[] tags, Type[] ts)
+{
+	assert(tags.len == ts.len);
+	Type t;
+	t.kind = TSUM;
+	t.keys = tags;
+	Type*[] ps = mem::new_array(Type*, ts.len);
+	for (int i = 0; i < ts.len; i++)
+	{
+		ps[i] = mem::new(Type);
+		*ps[i] = ts[i];
+	}
+	t.types = ps;
+	return t;
+}
+
+// Compile-time type table: name -> Type.  Linear search; tenv is tiny.
+fn TypeDefEntry* tenv_lookup(TypeDefEntry* tenv, String name)
+{
+	for (TypeDefEntry* e = tenv; e != null; e = e.next)
+	{
+		if (e.name == name) return e;
+	}
+	return null;
+}
+
+fn TypeDefEntry* tenv_extend(TypeDefEntry* tenv, String name, Type type)
+{
+	TypeDefEntry* e = mem::new(TypeDefEntry);
+	e.name = name;
+	e.type = type;
+	e.next = tenv;
+	return e;
+}
 //
 // The Value is a tagged union. Heap-allocated Array / Record / Closure / Prim
 // live behind a void* and are tracked with simple manual allocation for the
@@ -87,6 +176,19 @@ enum NodeType : char
 	SEQ,        // surface: sequential evaluation; desugars to ignored-binding lambdas
 	BINOP,      // surface: operator call; desugars to Call(Prim(op), [a, b])
 	METHODCALL, // surface: recv.m(args); desugars to Lambda-bind-r + Get+Call
+	// Rung 1 / Rung 2 surface-only forms:
+	LET_T,     // surface: typed Let; desugars to checked LetRec
+	LAMBDA_T,  // surface: typed Lambda; desugars to checked Lambda
+	TYPEDEF,   // surface: register a type name in tenv, emit body
+	CONSTRUCT, // surface: tagged value; desugars to Record with __tag/__val
+	MATCH,     // surface: pattern match; desugars to If-chain on __tag
+}
+
+struct TypeDefEntry
+{
+	String name;
+	Type type;
+	TypeDefEntry* next;
 }
 
 struct AstNode
@@ -96,6 +198,11 @@ struct AstNode
 	Value literal;
 	String[] names;
 	AstNode*[] children;
+	// Surface-only annotation payload (LAMBDA_T, LET_T).  These are erased
+	// during desugaring; the kernel evaluator never sees them.
+	Type*[] param_types;
+	Type* ret_type;
+	Type* ann_type;       // LET_T: type of the initializer
 }
 
 // ============================================================================
@@ -581,6 +688,26 @@ fn EvalResult prim_dispatch(String name, Value[] args)
 			grown[a.items.len] = args[1];
 			a.items = grown;
 			return { .value = mk_nil() };
+		case "array_all":
+		{
+			// array_all(arr, pred)  =>  true if pred(x) is truthy for every x in arr
+			if (args[0].type != ARRAY)
+			{
+				return { .thrown = true, .value = mk_str("type error: array_all expects array") };
+			}
+			if (args[1].type != CLOSURE)
+			{
+				return { .thrown = true, .value = mk_str("type error: array_all expects closure") };
+			}
+			Array* a = (Array*)args[0].ptr_val;
+			foreach (&item : a.items)
+			{
+				EvalResult r = apply_fn(args[1], { *item });
+				if (r.thrown) return r;
+				if (!truthy(r.value)) return { .value = mk_bool(false) };
+			}
+			return { .value = mk_bool(true) };
+		}
 		case "print":
 			foreach (arg : args)
 			{
@@ -606,25 +733,163 @@ fn AstNode* desugar_seq_kids(AstNode*[] exprs)
 	// Seq([a, b, ...])   =>   Call(Lambda(["_"], rest), [a])
 	// with the base case Seq([]) => Lit(nil), Seq([a]) => desugar(a).
 	if (exprs.len == 0) return make_lit(mk_nil());
-	if (exprs.len == 1) return desugar(exprs[0]);
-	AstNode* head = desugar(exprs[0]);
+	if (exprs.len == 1) return desugar(exprs[0], null);
+	AstNode* head = desugar(exprs[0], null);
 	AstNode*[] rest = mem::new_array(AstNode*, exprs.len - 1);
 	for (int i = 1; i < exprs.len; i++) rest[i - 1] = exprs[i];
 	return make_call(make_lambda({ "_" }, desugar_seq_kids(rest)), { head });
 }
 
 // Desugar every child of an already-kernel node, then rebuild it.
-fn AstNode* desugar_with_kids(NodeType t, AstNode*[] kids)
+fn AstNode* desugar_with_kids(NodeType t, AstNode*[] kids, TypeDefEntry* tenv)
 {
 	AstNode*[] out = mem::new_array(AstNode*, kids.len);
-	for (int i = 0; i < kids.len; i++) out[i] = desugar(kids[i]);
+	for (int i = 0; i < kids.len; i++) out[i] = desugar(kids[i], tenv);
 	AstNode* n = mem::new(AstNode);
 	n.type = t;
 	n.children = out;
 	return n;
 }
 
-fn AstNode* desugar(AstNode* e)
+int gensym_counter;
+fn String gensym(String prefix)
+{
+	gensym_counter++;
+	return string::tformat("%s%d", prefix, gensym_counter);
+}
+
+// type_pred: build a kernel boolean AST that is true iff `val` matches type t.
+// `val` is the already-desugared kernel expression being checked.
+fn AstNode* type_pred(Type t, AstNode* val, TypeDefEntry* tenv)
+{
+	switch (t.kind)
+	{
+		case TNAME:
+			if (t.name == "Int" || t.name == "Number")
+			{
+				return make_call(make_prim_node("is_number"), { val });
+			}
+			if (t.name == "String")
+			{
+				return make_call(make_prim_node("is_string"), { val });
+			}
+			if (t.name == "Bool")
+			{
+				return make_call(make_prim_node("is_bool"), { val });
+			}
+			if (tenv_lookup(tenv, t.name) != null)
+			{
+				return type_pred(tenv_lookup(tenv, t.name).type, val, tenv);
+			}
+			// unknown: gradual-typing escape hatch — be permissive.
+			return make_lit(mk_bool(true));
+		case TARRAY:
+		{
+			// is_array AND every element matches (via array_all + a lambda predicate)
+			String e = gensym("_e");
+			AstNode* e_var = make_var(e);
+			AstNode* elem_pred = make_lambda({ e }, type_pred(*t.elem, e_var, tenv));
+			return make_call(make_prim_node("array_all"), { val, elem_pred });
+		}
+		case TRECORD:
+		{
+			// is_record AND every named field present and matching.
+			// Folded into a right-nested If.
+			AstNode* result = make_lit(mk_bool(true));
+			for (int i = t.keys.len - 1; i >= 0; i--)
+			{
+				String fname = t.keys[i];
+				Type ftype = *t.types[i];
+				AstNode* fval = make_get(val, make_lit(mk_str(fname)));
+				AstNode* fcheck = type_pred(ftype, fval, tenv);
+				AstNode* has = make_call(make_prim_node("has_field"),
+					{ val, make_lit(mk_str(fname)) });
+				result = make_if(has,
+					make_if(fcheck, result, make_lit(mk_bool(false))),
+					make_lit(mk_bool(false)));
+			}
+			return make_if(
+				make_call(make_prim_node("is_record"), { val }),
+				result,
+				make_lit(mk_bool(false)));
+		}
+		case TSUM:
+		{
+			// is_record AND __tag is one of the listed tags.
+			AstNode* result = make_lit(mk_bool(false));
+			for (int i = 0; i < t.keys.len; i++)
+			{
+				String tag = t.keys[i];
+				AstNode* eq = make_call(make_prim_node("==="), {
+					make_get(val, make_lit(mk_str("__tag"))),
+					make_lit(mk_str(tag)),
+				});
+				result = make_if(eq, make_lit(mk_bool(true)), result);
+			}
+			return make_if(
+				make_call(make_prim_node("is_record"), { val }),
+				result,
+				make_lit(mk_bool(false)));
+		}
+	}
+	return make_lit(mk_bool(true));
+}
+
+// make_check: wrap an already-desugared kernel expression `expr_kernel` so
+// that it is re-evaluated exactly once, asserted against type t, and either
+// returned or thrown.  Mirrors the reference's `make_check`.
+fn AstNode* make_check(Type t, AstNode* expr_kernel, TypeDefEntry* tenv, String where)
+{
+	String v = gensym("_v");
+	AstNode* v_var = make_var(v);
+	AstNode* pred = type_pred(t, v_var, tenv);
+	String msg = string::tformat("type error at %s: expected %s", where, type_name(t));
+	AstNode* err = make_throw(make_lit(mk_str(msg)));
+	AstNode* body = make_if(pred, v_var, err);
+	return make_call(make_lambda({ v }, body), { expr_kernel });
+}
+
+fn String type_name(Type t)
+{
+	switch (t.kind)
+	{
+		case TNAME: return t.name;
+		case TARRAY: return string::tformat("Array<%s>", type_name(*t.elem));
+		case TRECORD:
+		{
+			@pool() {
+				DString buf;
+				buf.tinit();
+				buf.append_char('{');
+				for (int i = 0; i < t.keys.len; i++)
+				{
+					if (i > 0) buf.append(", ");
+					buf.append(t.keys[i]);
+					buf.append(": ");
+					buf.append(type_name(*t.types[i]));
+				}
+				buf.append_char('}');
+				return buf.str_view();
+			};
+		}
+		case TSUM:
+		{
+			@pool() {
+				DString buf;
+				buf.tinit();
+				for (int i = 0; i < t.keys.len; i++)
+				{
+					if (i > 0) buf.append(" | ");
+					buf.append(t.keys[i]);
+				}
+				return buf.str_view();
+			};
+		}
+	}
+	return "?";
+}
+
+fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv)
 {
 	switch (e.type)
 	{
@@ -639,14 +904,14 @@ fn AstNode* desugar(AstNode* e)
 			n.type = LAMBDA;
 			n.names = e.names;
 			AstNode*[] kids = mem::new_array(AstNode*, e.children.len);
-			for (int i = 0; i < e.children.len; i++) kids[i] = desugar(e.children[i]);
+			for (int i = 0; i < e.children.len; i++) kids[i] = desugar(e.children[i], tenv);
 			n.children = kids;
 			return n;
 		}
-		case CALL:    return desugar_with_kids(CALL, e.children);
-		case IF:      return desugar_with_kids(IF, e.children);
-		case GET:     return desugar_with_kids(GET, e.children);
-		case SET:     return desugar_with_kids(SET, e.children);
+		case CALL:    return desugar_with_kids(CALL, e.children, tenv);
+		case IF:      return desugar_with_kids(IF, e.children, tenv);
+		case GET:     return desugar_with_kids(GET, e.children, tenv);
+		case SET:     return desugar_with_kids(SET, e.children, tenv);
 		case RECORD:
 		{
 			// Record has parallel `names` and `children`; desugar children only.
@@ -654,19 +919,19 @@ fn AstNode* desugar(AstNode* e)
 			n.type = RECORD;
 			n.names = e.names;
 			AstNode*[] out = mem::new_array(AstNode*, e.children.len);
-			for (int i = 0; i < e.children.len; i++) out[i] = desugar(e.children[i]);
+			for (int i = 0; i < e.children.len; i++) out[i] = desugar(e.children[i], tenv);
 			n.children = out;
 			return n;
 		}
-		case ARRAY_LIT: return desugar_with_kids(ARRAY_LIT, e.children);
-		case THROW:     return desugar_with_kids(THROW, e.children);
+		case ARRAY_LIT: return desugar_with_kids(ARRAY_LIT, e.children, tenv);
+		case THROW:     return desugar_with_kids(THROW, e.children, tenv);
 		case TRY:
 		{
 			AstNode* n = mem::new(AstNode);
 			n.type = TRY;
 			n.name = e.name;
 			AstNode*[] out = mem::new_array(AstNode*, e.children.len);
-			for (int i = 0; i < e.children.len; i++) out[i] = desugar(e.children[i]);
+			for (int i = 0; i < e.children.len; i++) out[i] = desugar(e.children[i], tenv);
 			n.children = out;
 			return n;
 		}
@@ -676,7 +941,7 @@ fn AstNode* desugar(AstNode* e)
 			n.type = LETREC;
 			n.name = e.name;
 			AstNode*[] out = mem::new_array(AstNode*, e.children.len);
-			for (int i = 0; i < e.children.len; i++) out[i] = desugar(e.children[i]);
+			for (int i = 0; i < e.children.len; i++) out[i] = desugar(e.children[i], tenv);
 			n.children = out;
 			return n;
 		}
@@ -685,19 +950,17 @@ fn AstNode* desugar(AstNode* e)
 		case BINOP:
 		{
 			// BinOp(op, lhs, rhs)  =>  Call(Prim(op), [lhs', rhs'])
-			AstNode* lhs = desugar(e.children[0]);
-			AstNode* rhs = desugar(e.children[1]);
+			AstNode* lhs = desugar(e.children[0], tenv);
+			AstNode* rhs = desugar(e.children[1], tenv);
 			return make_call(make_prim_node(e.name), { lhs, rhs });
 		}
 		case METHODCALL:
 		{
 			// recv.m(args)  =>  Call(Lambda([r], Call(Get(Var r, m), [Var r, ...args])), [recv])
-			// The receiver is bound once; the field lookup runs once; the call passes
-			// the receiver as explicit self.  Matches the Go-style / reference design.
 			String m = e.name;
-			AstNode* recv = desugar(e.children[0]);
+			AstNode* recv = desugar(e.children[0], tenv);
 			AstNode*[] args = mem::new_array(AstNode*, e.children.len - 1);
-			for (int i = 1; i < e.children.len; i++) args[i - 1] = desugar(e.children[i]);
+			for (int i = 1; i < e.children.len; i++) args[i - 1] = desugar(e.children[i], tenv);
 			AstNode*[] call_args = mem::new_array(AstNode*, args.len + 1);
 			call_args[0] = make_var("r");
 			for (int i = 0; i < args.len; i++) call_args[i + 1] = args[i];
@@ -705,6 +968,115 @@ fn AstNode* desugar(AstNode* e)
 			AstNode* call = make_call(get, call_args);
 			AstNode* lam = make_lambda({ "r" }, call);
 			return make_call(lam, { recv });
+		}
+		case LAMBDA_T:
+		{
+			// Typed Lambda: strip annotations, wrap body in checks for params and return.
+			//   Lambda(xs:[name,Type?], ret:Type?, body)
+			//   => Lambda(xs, Check(ret, Bind(_r, body)))
+			AstNode* body_d = desugar(e.children[0], tenv);
+			String[] heap_names = mem::new_array(String, e.names.len);
+			for (int i = 0; i < e.names.len; i++) heap_names[i] = e.names[i];
+			// Param checks
+			AstNode* checked = body_d;
+			for (int i = e.param_types.len - 1; i >= 0; i--)
+			{
+				if (e.param_types[i] != null)
+				{
+					String pname = heap_names[i];
+					Type pt = *e.param_types[i];
+					AstNode* v = make_var(pname);
+					AstNode* pred = type_pred(pt, v, tenv);
+					String msg = string::tformat("type error at param '%s': expected %s", pname, type_name(pt));
+					checked = make_if(pred, checked, make_throw(make_lit(mk_str(msg))));
+				}
+			}
+			// Return check
+			if (e.ret_type != null)
+			{
+				String rname = gensym("_ret");
+				Type rt = *e.ret_type;
+				AstNode* rv = make_var(rname);
+				AstNode* pred = type_pred(rt, rv, tenv);
+				String msg = string::tformat("type error at return value: expected %s", type_name(rt));
+				AstNode* return_checked = make_if(pred, rv, make_throw(make_lit(mk_str(msg))));
+				AstNode* bind = make_lambda({ rname }, return_checked);
+				checked = make_call(bind, { checked });
+			}
+			AstNode* n = mem::new(AstNode);
+			n.type = LAMBDA;
+			n.names = heap_names;
+			AstNode*[] kids = mem::new_array(AstNode*, 1);
+			kids[0] = checked;
+			n.children = kids;
+			return n;
+		}
+		case LET_T:
+		{
+			// Typed Let: check the initializer against the annotation, then bind.
+			AstNode* init_d = desugar(e.children[0], tenv);
+			AstNode* body_d = desugar(e.children[1], tenv);
+			if (e.ann_type != null)
+			{
+				Type t = *e.ann_type;
+				String where = string::tformat("let '%s'", e.name);
+				init_d = make_check(t, init_d, tenv, where);
+			}
+			AstNode* n = mem::new(AstNode);
+			n.type = LETREC;
+			n.name = e.name;
+			AstNode*[] kids = mem::new_array(AstNode*, 2);
+			kids[0] = init_d;
+			kids[1] = body_d;
+			n.children = kids;
+			return n;
+		}
+		case TYPEDEF:
+		{
+			// TypeDef(name, t, body)  =>  desugar(body, tenv_extend(tenv, name, t))
+			// The body is the only thing the kernel ever sees.
+			tenv = tenv_extend(tenv, e.name, *e.ret_type);
+			return desugar(e.children[0], tenv);
+		}
+		case CONSTRUCT:
+		{
+			// Construct(tag, val)  =>  Record([("__tag", Lit tag), ("__val", val)])
+			AstNode* val = desugar(e.children[0], tenv);
+			String[] nk = mem::new_array(String, 2);
+			nk[0] = "__tag"; nk[1] = "__val";
+			AstNode*[] vk = mem::new_array(AstNode*, 2);
+			vk[0] = make_lit(mk_str(e.name));
+			vk[1] = val;
+			return make_record(nk, vk);
+		}
+		case MATCH:
+		{
+			// Match(scrut, [branches])  =>
+			//   Call(Lambda([s],
+			//      IfChain(Gets "__tag" against each tag, bind __val to `bind`,
+			//              run `branch`; default = Throw "non-exhaustive")))
+			AstNode* scrut = desugar(e.children[0], tenv);
+			String s = gensym("_scrut");
+			// Each branch is encoded as a 3-tuple (tag, bind, body) in e.names /
+			// e.children.  We store: e.names = [tag, bind] repeated, e.children = [body, ...]
+			// Simpler: e.children is the [scrut, body1, body2, ...] and e.names
+			// is the [tag1, bind1, tag2, bind2, ...].  Decode here.
+			AstNode*[] branch_bodies = e.children[1..];
+			AstNode* chain = make_throw(make_lit(mk_str("non-exhaustive match")));
+			for (int i = branch_bodies.len - 1; i >= 0; i--)
+			{
+				String tag = e.names[2 * i];
+				String bind = e.names[2 * i + 1];
+				AstNode* body_branch = desugar(branch_bodies[i], tenv);
+				AstNode* bound = make_call(make_lambda({ bind }, body_branch),
+					{ make_get(make_var(s), make_lit(mk_str("__val"))) });
+				AstNode* eq = make_call(make_prim_node("==="), {
+					make_get(make_var(s), make_lit(mk_str("__tag"))),
+					make_lit(mk_str(tag)),
+				});
+				chain = make_if(eq, bound, chain);
+			}
+			return make_call(make_lambda({ s }, chain), { scrut });
 		}
 	}
 	return e;
@@ -936,6 +1308,11 @@ fn EvalResult eval(AstNode* node, Env* env)
 		case SEQ:
 		case BINOP:
 		case METHODCALL:
+		case LET_T:
+		case LAMBDA_T:
+		case TYPEDEF:
+		case CONSTRUCT:
+		case MATCH:
 			return { .thrown = true, .value = mk_str("eval: surface node reached the kernel; desugar first") };
 	}
 	return { .thrown = true, .value = mk_str("unknown node") };
