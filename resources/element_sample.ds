@@ -1,0 +1,19 @@
+// A "JSX-like" element sample.  HTML-ish tags are sugar for function calls:
+//   <Foo bar="x" />          =>  Foo({bar: "x"})
+//   <Foo>a, b, c</Foo>        =>  Foo({}, a, b, c)
+//
+// The "tag" is just the name of a function in scope.  Attributes become a
+// record passed as the first argument; children become the remaining
+// arguments.  Here we model a tiny DOM: every constructor takes an attrs
+// record and an array of children (we wrap the children in a literal
+// array at the call site so the arity is fixed).
+
+let h1  = fn(attrs, text)  { { tag: "h1",        attrs: attrs, text: text } }
+let p   = fn(attrs, text)  { { tag: "p",         attrs: attrs, text: text } }
+let div = fn(attrs, kids)  { { tag: "div",       attrs: attrs, kids: kids } }
+
+let page = <div class="container">
+  [<h1>"Hello, elements!"</h1>, <p>"This is a paragraph."</p>]
+</div>
+
+page

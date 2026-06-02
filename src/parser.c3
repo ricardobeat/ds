@@ -363,9 +363,21 @@ fn void parser_init(Parser* p, Lexer* l)
 fn Token parser_advance(Parser* p)
 {
 	Token t = parser_cur(p);
-	// Invalidate the lexer's peek cache so the next peek advances.
-	p.lex.has_peek = false;
-	p.cur = lex_peek(p.lex);
+	// If the lexer already cached the next token, that IS the new current
+	// — adopt it.  Otherwise (e.g. on the very first advance), lex the
+	// next token fresh.  Either way, advance the cache to the token AFTER
+	// the new current so the next call sees a fresh peek.
+	if (p.lex.has_peek)
+	{
+		p.cur   = p.lex.peek_tok;
+		p.lex.peek_tok = lex_next(p.lex);
+	}
+	else
+	{
+		p.cur   = lex_next(p.lex);
+		p.lex.has_peek = true;
+		p.lex.peek_tok = lex_next(p.lex);
+	}
 	p.has_cur = true;
 	return t;
 }
@@ -543,6 +555,9 @@ fn AstNode* parse_cmp(Parser* p)
 	while (!p.error && (parser_check(p, TK_LT) || parser_check(p, TK_GT)
 		|| parser_check(p, TK_LE) || parser_check(p, TK_GE)))
 	{
+		// `<` followed by `/` is the closing tag `</` of an enclosing
+		// element; never consume it as a comparison operator.
+		if (parser_check(p, TK_LT) && lex_peek(p.lex).kind == TK_SLASH) break;
 		String op = parser_cur(p).text;
 		parser_advance(p);
 		AstNode* right = parse_add(p);
@@ -594,9 +609,170 @@ fn AstNode* parse_unary(Parser* p)
 	return parse_postfix(p);
 }
 
+// ---------------------------------------------------------------------------
+// Element syntax (JSX-like, but "html-like tags are nested function calls")
+//
+//   <Foo />                       =>  Foo({})
+//   <Foo bar="x" />               =>  Foo({bar: "x"})
+//   <Foo bar="x">a</Foo>          =>  Foo({bar: "x"}, a)
+//   <Foo bar="x">a, b, c</Foo>    =>  Foo({bar: "x"}, a, b, c)
+//
+// Attribute values are limited to literals (string, number, bool, identifier)
+// for v1.  Children are full expressions, comma-separated.
+// ---------------------------------------------------------------------------
+
+fn AstNode* parse_element(Parser* p)
+{
+	// Already at '<'.
+	parser_advance(p);
+	if (!parser_check(p, TK_IDENT))
+	{
+		parser_set_error(p, "expected tag name after '<'");
+		return make_lit(mk_nil());
+	}
+	String tag = parser_cur(p).text;
+	parser_advance(p);
+	// Parse attributes: IDENT '=' value
+	String[] attr_keys = {};
+	AstNode*[] attr_vals = {};
+	int an = 0;
+	while (parser_check(p, TK_IDENT))
+	{
+		String k = parser_cur(p).text;
+		parser_advance(p);
+		if (!parser_accept(p, TK_EQ))
+		{
+			parser_set_error(p, "expected '=' after attribute name");
+			return make_call(make_var(tag), { make_record({}, {}) });
+		}
+		AstNode* v;
+		if (parser_check(p, TK_STR))
+		{
+			v = make_lit(mk_str(parser_cur(p).text));
+			parser_advance(p);
+		}
+		else if (parser_check(p, TK_NUM))
+		{
+			v = make_lit(mk_num(parser_cur(p).num_val));
+			parser_advance(p);
+		}
+		else if (parser_check(p, TK_KW_TRUE))
+		{
+			v = make_lit(mk_bool(true));
+			parser_advance(p);
+		}
+		else if (parser_check(p, TK_KW_FALSE))
+		{
+			v = make_lit(mk_bool(false));
+			parser_advance(p);
+		}
+		else if (parser_check(p, TK_IDENT))
+		{
+			v = make_var(parser_cur(p).text);
+			parser_advance(p);
+		}
+		else
+		{
+			parser_set_error(p, "expected attribute value (string, number, bool, or ident)");
+			return make_call(make_var(tag), { make_record({}, {}) });
+		}
+		String[] nk = mem::new_array(String, (sz)(an + 1));
+		AstNode*[] nv = mem::new_array(AstNode*, (sz)(an + 1));
+		for (int i = 0; i < an; i++) { nk[i] = attr_keys[i]; nv[i] = attr_vals[i]; }
+		nk[an] = k;
+		nv[an] = v;
+		attr_keys = nk;
+		attr_vals = nv;
+		an++;
+	}
+	AstNode* attrs = make_record(attr_keys, attr_vals);
+	// Self-closing: '/>'
+	if (parser_accept(p, TK_SLASH))
+	{
+		if (!parser_accept(p, TK_GT))
+		{
+			parser_set_error(p, "expected '>' to close self-closing element");
+			return make_call(make_var(tag), { attrs });
+		}
+		return make_call(make_var(tag), { attrs });
+	}
+	if (!parser_accept(p, TK_GT))
+	{
+		parser_set_error(p, "expected '>' or '/>' to close element open tag");
+		return make_call(make_var(tag), { attrs });
+	}
+	// Parse children: comma-separated expressions until '</'.
+	AstNode*[] children = {};
+	int cn = 0;
+	while (!parser_check(p, TK_EOF))
+	{
+		// If we hit `</`, we're done with children.
+		if (parser_check(p, TK_LT))
+		{
+			Token t1 = lex_peek(p.lex);
+			if (t1.kind == TK_SLASH) break;
+		}
+		AstNode* child = parse_or(p);
+		if (p.error) return make_call(make_var(tag), { attrs });
+		AstNode*[] nc = mem::new_array(AstNode*, (sz)(cn + 1));
+		for (int i = 0; i < cn; i++) nc[i] = children[i];
+		nc[cn] = child;
+		children = nc;
+		cn++;
+		if (!parser_accept(p, TK_COMMA)) break;
+	}
+	// Consume '</tag>'
+	if (!parser_check(p, TK_LT))
+	{
+		parser_set_error(p, "expected '</' to close element");
+		return make_call(make_var(tag), { attrs });
+	}
+	parser_advance(p); // <
+	if (!parser_accept(p, TK_SLASH))
+	{
+		parser_set_error(p, "expected '/' after '<' in closing tag");
+		return make_call(make_var(tag), { attrs });
+	}
+	if (!parser_check(p, TK_IDENT) || parser_cur(p).text != tag)
+	{
+		parser_set_error(p, "closing tag does not match opening tag");
+		return make_call(make_var(tag), { attrs });
+	}
+	parser_advance(p);
+	if (!parser_accept(p, TK_GT))
+	{
+		parser_set_error(p, "expected '>' to close closing tag");
+	}
+	// Build the call: tag(attrs, child1, child2, ...).
+	AstNode*[] args = mem::new_array(AstNode*, (sz)(cn + 1));
+	args[0] = attrs;
+	for (int i = 0; i < cn; i++) args[i + 1] = children[i];
+	return make_call(make_var(tag), args);
+}
+
 fn AstNode* parse_postfix(Parser* p)
 {
-	AstNode* e = parse_primary(p);
+	// Element syntax: `<Tag attr=val ... />` or `<Tag ...>children</Tag>`.
+	// Disambiguate from the comparison `<` by looking at the next token:
+	// `< IDENT` is element, anything else is comparison.  Done here (not in
+	// parse_unary) so postfix chains like `<Foo />.bar` still work.
+	AstNode* e;
+	if (parser_check(p, TK_LT))
+	{
+		Token t1 = lex_peek(p.lex);
+		if (t1.kind == TK_IDENT)
+		{
+			e = parse_element(p);
+		}
+		else
+		{
+			e = parse_primary(p);
+		}
+	}
+	else
+	{
+		e = parse_primary(p);
+	}
 	while (!p.error)
 	{
 		if (parser_check(p, TK_DOT))
@@ -701,7 +877,13 @@ fn AstNode* parse_record_lit(Parser* p)
 			keys = nk;
 			vals = nv;
 			n++;
-			if (!parser_accept(p, TK_COMMA)) break;
+			if (parser_accept(p, TK_COMMA))
+			{
+				// Trailing comma before `}` is fine.
+				if (parser_check(p, TK_RBRACE)) break;
+				continue;
+			}
+			break;
 		}
 	}
 	if (!parser_accept(p, TK_RBRACE))
@@ -727,7 +909,12 @@ fn AstNode* parse_array_lit(Parser* p)
 			ni[n] = e;
 			items = ni;
 			n++;
-			if (parser_accept(p, TK_COMMA)) continue;
+			if (parser_accept(p, TK_COMMA))
+			{
+				// Trailing comma before `]` is fine.
+				if (parser_check(p, TK_RBRACK)) break;
+				continue;
+			}
 			break;
 		}
 	}

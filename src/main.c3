@@ -506,47 +506,41 @@ fn Value show(Value v) {
 		case STRING: return mk_str(string::tformat("%s", v.str_val));
 		case ARRAY:
 			Array* a = (Array*)v.ptr_val;
-			@pool() {
-				DString buf;
-				buf.tinit();
-				buf.append_char('[');
-				for (int i = 0; i < a.items.len; i++) {
-					if (i > 0) buf.append(", ");
-					Value s = show(a.items[i]);
-					buf.append(s.str_val);
-				}
-				buf.append_char(']');
-				return mk_str(buf.str_view());
-			};
+			DString buf;
+			buf.init(mem);
+			buf.append_char('[');
+			for (int i = 0; i < a.items.len; i++) {
+				if (i > 0) buf.append(", ");
+				Value s = show(a.items[i]);
+				buf.append(s.str_val);
+			}
+			buf.append_char(']');
+			return mk_str(buf.str_view());
 		case RECORD:
 			Record* r = (Record*)v.ptr_val;
-			@pool() {
-				DString buf;
-				buf.tinit();
-				buf.append_char('{');
-				for (int i = 0; i < r.keys.len; i++) {
-					if (i > 0) buf.append(", ");
-					buf.append(r.keys[i]);
-					buf.append(": ");
-					Value s = show(r.values[i]);
-					buf.append(s.str_val);
-				}
-				buf.append_char('}');
-				return mk_str(buf.str_view());
-			};
+			DString buf;
+			buf.init(mem);
+			buf.append_char('{');
+			for (int i = 0; i < r.keys.len; i++) {
+				if (i > 0) buf.append(", ");
+				buf.append(r.keys[i]);
+				buf.append(": ");
+				Value s = show(r.values[i]);
+				buf.append(s.str_val);
+			}
+			buf.append_char('}');
+			return mk_str(buf.str_view());
 		case CLOSURE:
 			Closure* c = (Closure*)v.ptr_val;
-			@pool() {
-				DString buf;
-				buf.tinit();
-				buf.append("<closure(");
-				for (int i = 0; i < c.params.len; i++) {
-					if (i > 0) buf.append(", ");
-					buf.append(c.params[i]);
-				}
-				buf.append(")>");
-				return mk_str(buf.str_view());
-			};
+			DString buf;
+			buf.init(mem);
+			buf.append("<closure(");
+			for (int i = 0; i < c.params.len; i++) {
+				if (i > 0) buf.append(", ");
+				buf.append(c.params[i]);
+			}
+			buf.append(")>");
+			return mk_str(buf.str_view());
 		case PRIMITIVE: return mk_str(string::tformat("<prim %s>", v.str_val));
 	}
 	return mk_nil();
@@ -1353,10 +1347,50 @@ fn Value run_source(String src)
 fn int main(String[] args) {
 	if (args.len < 2)
 	{
-		io::printn("usage: engine <file.ds>");
-		io::printn("       (reads a JS-variant source file and prints the result)");
+		io::printn("usage:");
+		io::printn("  engine run <file.ds>     evaluate a script and print the result");
+		io::printn("  engine fmt <file.ds>     print the source re-formatted in canonical style");
 		return 0;
 	}
+	if (args[1] == "fmt")
+	{
+		if (args.len < 3)
+		{
+			io::printn("usage: engine fmt <file.ds>");
+			return 1;
+		}
+		char[]? contents = file::load_temp(args[2]);
+		if (catch err = contents)
+		{
+			io::printfn("error: could not read %s", args[2]);
+			return 1;
+		}
+		FormatResult fr = format_source((String)contents);
+		if (fr.error)
+		{
+			io::printfn("%s", fr.message);
+			return 1;
+		}
+		io::print(fr.output);
+		return 0;
+	}
+	if (args[1] == "run")
+	{
+		if (args.len < 3)
+		{
+			io::printn("usage: engine run <file.ds>");
+			return 1;
+		}
+		char[]? contents = file::load_temp(args[2]);
+		if (catch err = contents)
+		{
+			io::printfn("error: could not read %s", args[2]);
+			return 1;
+		}
+		run_source((String)contents);
+		return 0;
+	}
+	// Default: treat args[1] as a script to run (backwards-compatible).
 	char[]? contents = file::load_temp(args[1]);
 	if (catch err = contents)
 	{

@@ -1,25 +1,47 @@
 # Progress
 
-## Status: Build-order step 1 — kernel tree-walker (DONE)
+## Status: Build-order step 1 — kernel tree-walker (DONE) + parser + CLI + formatter + element syntax
 
-The full kernel evaluator is in `src/main.c3` (single file, ~700 LoC) and
-`test/kernel_test.c3` has 20 passing tests, ported from `reference/test.py`
-sections 1, 2, 3, 5, 7 (the ones the kernel can answer directly).
+The full kernel evaluator is in `src/main.c3` (~1370 LoC), the surface
+parser in `src/parser.c3` (~1080 LoC), and the round-trip formatter in
+`src/formatter.c3` (~440 LoC). 81 tests pass across kernel, parser,
+element, and formatter test files.
 
 ### What works
 
 - All 13 kernel nodes: Lit, Var, Lambda, Call, If, Get, Set, Record,
   ArrayLit, Throw, Try, Prim, LetRec
-- Value universe: Number, String, Bool, Nil, Array, Record, Closure, Primitive
+- Surface: SEQ, BINOP, METHODCALL, LET_T, LAMBDA_T, TYPEDEF, CONSTRUCT,
+  MATCH — all desugar to the kernel
+- JSX-like element syntax: `<Tag attrs />` and `<Tag>children</Tag>`
+  desugar to plain function calls
+- Value universe: Number, String, Bool, Nil, Array, Record, Closure,
+  Primitive
 - Heap-allocated Array / Record / Closure / AstNode / Env
+- HashMap-backed `Env` (O(1) name lookup per scope)
 - Primitives: `+ - * / === < > <= >= and or is_number is_string is_bool
-  is_array is_record is_nil has_field len push print`
+  is_array is_record is_nil has_field len push print array_all`
 - `push` mutates an array in place (with manual realloc)
 - `Set` returns the assigned value (matches Rust/Rung 1 invariant)
 - Truthy: only `false` and `nil` are falsy (0 and "" are truthy, Lua-style)
 - `===` is strict type-then-value equality
 - Recursive `let` via `LetRec` (name visible in its own initializer)
 - Throws carry a value; `try/catch` binds it in a fresh env
+- CLI: `engine run <file.ds>`, `engine fmt <file.ds>`
+- Round-trip formatter (parse + re-emit) with idempotence
+
+### Element syntax
+
+`<Foo bar="x" />` desugars to `Foo({bar: "x"})`; `<Foo>a, b, c</Foo>`
+desugars to `Foo({}, a, b, c)`. The tag is just the name of a function
+in scope.  Attribute values may be string literals, numbers, bools, or
+identifiers. See `resources/element_sample.ds` for a tiny DOM built out
+of element constructors.
+
+The element-vs-comparison `<` ambiguity is resolved in `parse_postfix`
+by peeking the next token: `< IDENT` is an element, anything else is a
+comparison. `parse_cmp` also has a guard so it doesn't consume `<` when
+followed by `/` (the element closing tag).
 
 ### Gotchas hit (worth remembering)
 
@@ -38,39 +60,34 @@ sections 1, 2, 3, 5, 7 (the ones the kernel can answer directly).
   with `*found` and `&found`. Works fine.
 - **`.ordinal`** is required to print an enum (otherwise: "An enum cannot
   directly be turned into a number").
+- **`DString.tinit()` allocates into a temp pool** that frees at
+  `@pool` exit; the resulting slice dangles past the pool. Use
+  `DString.init(mem)` for strings that must outlive the pool.
+- **C3 slice operator `..` is INCLUSIVE.** `arr[0..2]` returns 3
+  elements, not 2. Use `arr[0:2]` for length-based slices.
+- **C3 else-brace rule**: `if (x) y; else z;` is a syntax error. Must
+  be `if (x) { y; } else { z; }`.
+- **`@pool` lifetime gotcha**: returning a `Value` whose `str_val` is a
+  temp-allocated slice produces a dangling pointer. Either use
+  `DString.init(mem)` for heap-allocated strings, or copy results out
+  of the `@pool` block before it closes.
+- **`parser_advance` must adopt the lexer's cached peek as the new
+  current**, not invalidate-and-re-lex. Otherwise any `lex_peek` call
+  (e.g. the element-syntax check) is silently skipped on the next
+  `parser_advance`.
+- **`parse_cmp` must not consume `<` when followed by `/`.** The element
+  closing tag `</tag>` opens with `<`; the comparison rule would
+  otherwise eat it as a `<` operator and the closing tag would be
+  parsed as `/wrap` and then `>`.
 
 ### Next (in build order)
 
-- [x] B. Port the reference test cases to C3 unit tests  *(done for kernel)*
-- [x] C. Arrays + records dispatch  *(done in eval)*
-- [x] D. **Method-call desugaring (front-end only)** ← landed
-- [x] E. **Rung 1 type-check desugaring** ← just landed (30 tests, all pass)
-- [x] F. **Rung 2 type table, Construct, match** ← just landed (30 tests, all pass)
-- [ ] G. Bytecode compiler + VM (upvalue closing, TAILCALL) ← *next*
-
-### Step D details
-
-- New surface node types: `SEQ`, `BINOP`, `METHODCALL`
-- `BinOp(op, a, b)`           → `Call(Prim(op), [a, b])`
-- `Seq([a, b, ...])`          → `Call(Lambda(["_"], rest), [a])` (right-fold)
-- `MethodCall(r, m, args)`    → `Call(Lambda(["r"], Call(Get(r, m), [r, ...args])), [r])`
-  (receiver bound once, field lookup runs once, receiver passed as explicit self)
-- The desugarer descends into children of every node — **including `LAMBDA`**
-  (its body might itself be a `SEQ`).
-
-### New gotcha (Step D)
-
-- **Slice literal as function argument that the function stores.**
-  `make_lambda({ "x" }, body)` makes a `String[]` stack temp; the temp
-  lives only until `make_lambda` returns. If `make_lambda` copies the
-  slice's (ptr, len) into a heap struct field (which it must, since the
-  AST outlives the call), the copy points at freed stack. The same trap
-  applies to `make_record({...}, ...)`. **Both now heap-copy their slice
-  argument on entry.**
-
-### Memory note
-
-- Switched `mem::tnew` → `mem::new` everywhere in the kernel because the
-  temp arena reallocates on growth, which invalidates every pointer that
-  lives in it. We pay for the leak detection (run with `c3c test --test-noleak`)
-  until refcounting lands with the bytecode VM.
+- [x] B. Port the reference test cases to C3 unit tests
+- [x] C. Arrays + records dispatch
+- [x] D. Method-call desugaring (front-end only)
+- [x] E. Rung 1 type-check desugaring
+- [x] F. Rung 2 type table, Construct, match
+- [x] H. Surface parser + CLI
+- [x] I. Round-trip formatter
+- [x] J. JSX-like element syntax
+- [ ] G. Bytecode compiler + VM (upvalue closing, TAILCALL, refcounting)

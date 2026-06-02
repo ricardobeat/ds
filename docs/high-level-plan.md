@@ -87,6 +87,9 @@ Arrays + records — the Get/Set dispatch branching integer-array vs. hashed-rec
 Method-call sugar — desugar MethodCall; verify receiver-evaluated-once.
 Rung 1 checks — annotation slots, check() desugaring, is_* primitives. Boundary errors work.
 Rung 2 — type table, Construct, match lowering. Sum types + pattern matching work.
+Surface parser + CLI — let the user run a real `.ds` file from disk. (DONE)
+Round-trip formatter — parse, re-emit in canonical style. (DONE)
+JSX-like element syntax — `<Tag attr=val ... />` and `<Tag>child, child, ...</Tag>` desugar to function calls. (DONE)
 Bytecode compiler + VM — compile the kernel (not the surface language); implement upvalue closing and TAILCALL. Add refcounting; cycle collector only if needed.
 
 Steps 3–5 add no kernel nodes and no opcodes — pure front-end desugaring — so you can build and test them against the tree-walker before the VM exists, and the VM never knows they happened. Steps 1–3 are ~150 lines; 4–5 add maybe 60–80 more.

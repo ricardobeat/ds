@@ -10,26 +10,33 @@ A JS variant interpreter written in C3 (systems language by Christoffer Lernö).
 ## Build Commands
 
 ```bash
-c3c build           # Build debug target
-c3c build release   # Build release target  
-c3c run             # Build and run
-c3c test            # Run @test functions
-c3c compile-run src/main.c3  # Compile and run single file
+c3c build                       # Build debug target
+c3c build release               # Build release target
+c3c test --test-noleak          # Build + run all 81 tests
+./build/engine run <file.ds>    # Parse + desugar + evaluate, print the value
+./build/engine fmt <file.ds>    # Print the source re-formatted in canonical style
+./build/engine <file.ds>        # Same as `run` (legacy form)
 ```
 
 Output binary: `build/engine`
 
 ## Syntax
 
-Javascript-like. No ASI. 
+Javascript-like. No ASI. Surface features (let, seq, binop, method calls,
+typed functions, sum types, pattern matching, and JSX-like elements) all
+desugar to the ~12-node kernel before the evaluator runs.
 
 ## Project Structure
 
 ```
-src/main.c3          - Entry point, Value types, AST nodes, Env, evaluator skeleton
-reference/engine.py  - Python reference implementation (read for design intent)
-reference/test.py    - Test cases showing expected behavior
+src/main.c3            - Entry point, Value, AST, Env, desugarer, evaluator, CLI
+src/parser.c3          - Lexer + surface parser
+src/formatter.c3       - Round-trip formatter (canonical 2-space, K&R style)
+reference/engine.py    - Python source of truth for semantics
+reference/test.py      - Test cases showing expected behavior
 docs/high-level-plan.md - Full language specification and design invariants
+test/                  - @test functions (kernel, parser, element, formatter)
+resources/             - Standalone .ds scripts (sample, element_sample)
 ```
 
 ## Key Design Decisions (from reference)
@@ -45,6 +52,20 @@ Type annotations on Lambdas are stripped during desugaring and replaced with `If
 ### Set is an expression
 
 `Set` returns the value being assigned, like Rust. Loops-for-effect return `Nil`.
+
+### Element syntax (JSX-like) is sugar for function calls
+
+`<Foo bar="x" />` desugars to `Foo({bar: "x"})`; `<Foo>a, b</Foo>`
+desugars to `Foo({}, a, b)`. The element-vs-comparison `<` ambiguity is
+resolved in `parse_postfix` by peeking the next token: `< IDENT` is an
+element, anything else is a comparison. `parse_cmp` also has a guard so
+it doesn't consume `<` when followed by `/` (the element closing tag).
+
+### Parser uses the lexer's peek cache
+
+`parser_advance` adopts the cached peek as the new current and updates
+the cache by one more `lex_next`. This is required for `lex_peek` results
+(e.g. the element check) to survive a subsequent `parser_advance`.
 
 ## Value Universe
 
