@@ -15,6 +15,7 @@ import std::io;
 
 fn Value run_parsed(String src)
 {
+	if (builtin_env == null) builtin_env = make_builtin_env();
 	@pool() {
 		ParseResult pr = parse_source(src);
 		if (pr.error)
@@ -23,7 +24,7 @@ fn Value run_parsed(String src)
 			return mk_nil();
 		}
 		AstNode* kernel = desugar(pr.root, null);
-		EvalResult r = eval(kernel, null);
+		EvalResult r = eval(kernel, builtin_env);
 		if (r.thrown)
 		{
 			Value s = show(r.value);

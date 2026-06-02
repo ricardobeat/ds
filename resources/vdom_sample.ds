@@ -1,0 +1,26 @@
+// A minimal virtual DOM built out of the element syntax.  The `h`
+// function is the only constructor; the tag name lives in the `name`
+// attribute so the same constructor handles every tag.
+
+let wrap = fn(x) { if is_array(x) then x else [x] }
+
+let h = fn(attrs, kids) {
+  { name: attrs.name, attrs: attrs, kids: wrap(kids) }
+}
+
+let join = fn(rend, xs) {
+  if len(xs) === 0 then ""
+  else rend(xs[0]) + join(rend, xs[1..])
+}
+
+let render = fn(v) {
+  if v.name === "text" then v.kids[0]
+  else "<" + v.name + ">" + join(render, v.kids) + "</" + v.name + ">"
+}
+
+let page = <h name="div" class="container">
+  [<h name="h1">[<h name="text">"Hello, vdom!"</h>]</h>,
+   <h name="p">[<h name="text">"A paragraph built from a virtual DOM."</h>]</h>]
+</h>
+
+render(page)

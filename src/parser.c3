@@ -10,7 +10,7 @@ enum TokKind : char
 	TK_EOF,
 	TK_NUM, TK_STR, TK_IDENT,
 	TK_LPAREN, TK_RPAREN, TK_LBRACE, TK_RBRACE, TK_LBRACK, TK_RBRACK,
-	TK_SEMI, TK_COMMA, TK_DOT, TK_COLON, TK_EQ, TK_ARROW, TK_BANG,
+	TK_SEMI, TK_COMMA, TK_DOT, TK_DOTDOT, TK_COLON, TK_EQ, TK_ARROW, TK_BANG,
 	TK_PLUS, TK_MINUS, TK_STAR, TK_SLASH,
 	TK_EQEQ, TK_NEQ, TK_LT, TK_GT, TK_LE, TK_GE,
 	TK_AND, TK_OR,
@@ -216,7 +216,14 @@ fn Token lex_one(Lexer* l, long start_line, long start_col)
 	if (c == ']') { t.kind = TK_RBRACK; t.text = "]"; l.pos++; return t; }
 	if (c == ';') { t.kind = TK_SEMI; t.text = ";"; l.pos++; return t; }
 	if (c == ',') { t.kind = TK_COMMA; t.text = ","; l.pos++; return t; }
-	if (c == '.') { t.kind = TK_DOT; t.text = "."; l.pos++; return t; }
+	if (c == '.')
+	{
+		if (l.pos + 1 < l.src.len && l.src[l.pos + 1] == '.')
+		{
+			t.kind = TK_DOTDOT; t.text = ".."; l.pos += 2; return t;
+		}
+		t.kind = TK_DOT; t.text = "."; l.pos++; return t;
+	}
 	if (c == ':') { t.kind = TK_COLON; t.text = ":"; l.pos++; return t; }
 	if (c == '+') { t.kind = TK_PLUS; t.text = "+"; l.pos++; return t; }
 	if (c == '-')
@@ -828,14 +835,57 @@ fn AstNode* parse_postfix(Parser* p)
 		else if (parser_check(p, TK_LBRACK))
 		{
 			parser_advance(p);
-			AstNode* idx = parse_or(p);
-			if (p.error) return e;
+			// Slice: xs[i..], xs[..j], xs[i..j].  Desugar to a call of
+			// the `slice` builtin with three args: (arr, start, end).
+			// A missing bound is represented by the integer -1.
+			if (parser_check(p, TK_DOTDOT))
+			{
+				parser_advance(p);
+				AstNode* end = parse_or(p);
+				if (p.error) return e;
+				AstNode*[] args = mem::new_array(AstNode*, 3);
+				args[0] = e;
+				args[1] = make_lit(mk_num(0.0));
+				args[2] = end;
+				e = make_call(make_var("slice"), args);
+			}
+			else
+			{
+				AstNode* start = parse_or(p);
+				if (p.error) return e;
+				if (parser_check(p, TK_DOTDOT))
+				{
+					parser_advance(p);
+					AstNode*[] args;
+					if (parser_check(p, TK_RBRACK))
+					{
+						// xs[i..]  — slice to end.
+						args = mem::new_array(AstNode*, 3);
+						args[0] = e;
+						args[1] = start;
+						args[2] = make_lit(mk_num(-1.0));
+					}
+					else
+					{
+						AstNode* end = parse_or(p);
+						if (p.error) return e;
+						args = mem::new_array(AstNode*, 3);
+						args[0] = e;
+						args[1] = start;
+						args[2] = end;
+					}
+					e = make_call(make_var("slice"), args);
+				}
+				else
+				{
+					e = make_get(e, start);
+				}
+			}
 			if (!parser_accept(p, TK_RBRACK))
 			{
-				parser_set_error(p, "expected ']' to close index");
+				parser_set_error(p, "expected ']' to close index or slice");
 				return e;
 			}
-			e = make_get(e, idx);
 		}
 		else
 		{

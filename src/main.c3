@@ -711,6 +711,33 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 				}
 				return { .value = mk_bool(true) };
 			}
+		case "slice":
+		{
+			// slice(arr, start, end)  =>  a fresh array of arr[start..end].
+			// start and end are numbers; end of -1 means "to the end".
+			if (args[0].type != ARRAY) {
+				return { .thrown = true, .value = mk_str("type error: slice expects array") };
+			}
+			Array* a = (Array*)args[0].ptr_val;
+			long len = (long)a.items.len;
+			long start = (long)args[1].num_val;
+			long end   = (long)args[2].num_val;
+			if (start < 0) start = len + start;
+			if (end   < 0) end   = len;
+			if (start < 0)         start = 0;
+			if (start > len)       start = len;
+			if (end   < start)     end   = start;
+			if (end   > len)       end   = len;
+			long n = end - start;
+			Value[] out = mem::new_array(Value, (sz)n);
+			for (long i = 0; i < n; i++) out[i] = a.items[start + i];
+			Array* r = new_array();
+			r.items = out;
+			Value v;
+			v.type = ARRAY;
+			v.ptr_val = r;
+			return { .value = v };
+		}
 		case "print":
 			foreach (arg : args) {
 				Value s = show(arg);
@@ -1314,9 +1341,38 @@ fn EvalResult eval(AstNode* node, Env* env) {
 // TOP-LEVEL
 // ============================================================================
 
+// Builtin env: a parent env that maps the names of every primitive
+// (len, push, print, ...) to PRIMITIVE values.  This makes primitives
+// callable as ordinary functions: `len(arr)` works because `len` resolves
+// to a PRIMITIVE that apply_fn dispatches to prim_dispatch.
+//
+// The eval entry point passes this as the root of every program's
+// environment chain.
+Env* builtin_env;
+
+fn Env* make_builtin_env()
+{
+	String[] names = {
+		"+", "-", "*", "/",
+		"===", "<", ">", "<=", ">=",
+		"and", "or",
+		"is_number", "is_string", "is_bool", "is_array", "is_record", "is_nil",
+		"has_field", "len", "push", "print", "array_all", "slice",
+	};
+	Env* e = mem::new(Env);
+	e.parent = null;
+	e.map = mem::new(HashMap{String, Value});
+	e.map.init(mem);
+	for (int i = 0; i < names.len; i++)
+	{
+		e.map.set(names[i], mk_prim(names[i]));
+	}
+	return e;
+}
+
 fn Value run(AstNode* node) {
 	@pool() {
-		EvalResult r = eval(node, null);
+		EvalResult r = eval(node, builtin_env);
 		if (r.thrown) {
 			Value s = show(r.value);
 			io::printfn("threw: %s", s.str_val);
@@ -1345,6 +1401,7 @@ fn Value run_source(String src)
 }
 
 fn int main(String[] args) {
+	builtin_env = make_builtin_env();
 	if (args.len < 2)
 	{
 		io::printn("usage:");
