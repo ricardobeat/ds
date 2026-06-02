@@ -1,9 +1,16 @@
 // A "JS but not JS" sample: two records with method fields, a higher-order
 // greet function, and a final expression that is the program's result.
 
-let alice = { name: "Alice",
-              greet: fn(self) { "hi, I'm " + self.name } };
-let bob   = { name: "Bob",
-              greet: fn(self) { "hi, I'm " + self.name } };
-let greetBoth = fn(a, b) { a.greet() + " and " + b.greet() };
+let alice = {
+  name: "Alice",
+  greet: fn(self) { "hi mf, I'm " + self.name }
+}
+
+let bob   = {
+  name: "Bob",
+  greet: fn(self) { "hi, I'm " + self.name }
+}
+
+let greetBoth = fn(a, b) { a.greet() + " and " + b.greet() }
+
 greetBoth(alice, bob)
