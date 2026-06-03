@@ -824,7 +824,7 @@ fn AstNode* parse_postfix(Parser* p)
 			if (e.type == GET)
 			{
 				AstNode* recv = e.children[0];
-				String mname = e.children[1].literal.str_val;
+				String mname = *as_str(e.children[1].literal);
 				// Pass user args (not the receiver) — the desugarer binds
 				// the receiver as the first argument of the call.
 				e = make_methodcall(recv, mname, args);

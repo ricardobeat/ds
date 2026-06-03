@@ -93,3 +93,15 @@ JSX-like element syntax — `<Tag attr=val ... />` and `<Tag>child, child, ...</
 Bytecode compiler + VM — compile the kernel (not the surface language); implement upvalue closing and TAILCALL. Add refcounting; cycle collector only if needed.
 
 Steps 3–5 add no kernel nodes and no opcodes — pure front-end desugaring — so you can build and test them against the tree-walker before the VM exists, and the VM never knows they happened. Steps 1–3 are ~150 lines; 4–5 add maybe 60–80 more.
+
+Performance roadmap (prioritized)
+
+| Priority | Change                                  | Expected gain                           |
+|----------|-----------------------------------------|-----------------------------------------|
+| 1        | Bytecode compiler + VM (step G)         | 20–50× speed, 1000× memory              |
+| 2        | NaN-boxed Value (8 bytes)               | 2–5× further speed, 5× memory           |
+| 3        | Interned field atoms for record access  | 2–3× on record-heavy code               |
+| 4        | TAILCALL opcode                         | Unlimited recursion depth, loops viable |
+| 5        | Reference counting on closures/arrays/records | Deterministic, pause-free GC      |
+
+Priority 1 (bytecode VM) is the single biggest lever — it collapses the tree-walker's per-node overhead into tight bytecode dispatch and enables all the other optimizations. NaN-boxing (priority 2) shrinks Value from 24+ bytes to 8, which cascades into cache wins everywhere. Interned atoms (priority 3) turn record field lookup from string comparison into integer comparison. TAILCALL (priority 4) is mandatory for correctness — loops are recursion, and without frame reuse they overflow. Reference counting (priority 5) gives deterministic, pause-free GC that fits the minimalist aesthetic; add a cycle collector only if real cycles appear.

@@ -91,8 +91,8 @@ older(alice, bob).name`;
 	// Format, then run the formatted version.
 	String formatted = fmt(src);
 	Value after       = run_parsed(formatted);
-	assert(before.type == after.type);
-	if (before.type == STRING) assert(before.str_val == after.str_val);
+	assert(tag_of(before) == tag_of(after));
+	if (is_str(before)) assert(*as_str(before) == *as_str(after));
 }
 
 fn void test_fmt_if_multiline_when_long() @test
@@ -130,6 +130,6 @@ let greetOlder = fn(a, b) {
 greetOlder(alice, bob)`;
 	String formatted = fmt(src);
 	Value v          = run_parsed(formatted);
-	assert(v.type == STRING);
-	assert(v.str_val == "hi, I'm Alice (older)");
+	assert(is_str(v));
+	assert(*as_str(v) == "hi, I'm Alice (older)");
 }

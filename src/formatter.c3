@@ -40,9 +40,9 @@ fn void fmt_key(DString* buf, AstNode* key)
 {
 	// If the key is a string literal that is a valid identifier, emit it
 	// unquoted (the .name form).  Otherwise emit the literal as-is.
-	if (key.type == LIT && key.literal.type == STRING && fmt_is_valid_ident(key.literal.str_val))
+	if (key.type == LIT && is_str(key.literal) && fmt_is_valid_ident(*as_str(key.literal)))
 	{
-		buf.append(key.literal.str_val);
+		buf.append(*as_str(key.literal));
 		return;
 	}
 	fmt_expr(buf, key, 0);
@@ -111,14 +111,14 @@ fn long fmt_estimate_width(AstNode* e)
 	switch (e.type)
 	{
 		case LIT:
-			if (e.literal.type == STRING) return e.literal.str_val.len + 2;
-			if (e.literal.type == NUMBER)
+			if (is_str(e.literal)) return (*as_str(e.literal)).len + 2;
+			if (is_num(e.literal))
 			{
-				double n = e.literal.num_val;
+				double n = as_num(e.literal);
 				if (n == (double)(long)n) return string::tformat("%d", (long)n).len;
 				return string::tformat("%f", n).len;
 			}
-			if (e.literal.type == BOOL) return e.literal.bool_val ? 4 : 5;
+			if (is_bool(e.literal)) return as_bool(e.literal) ? 4 : 5;
 			return 3; // nil
 		case VAR: return e.name.len;
 		case PRIM: return e.name.len + 2; // <prim foo>
@@ -309,13 +309,13 @@ fn void fmt_expr(DString* buf, AstNode* e, int indent)
 	switch (e.type)
 	{
 		case LIT:
-			switch (e.literal.type)
+			switch (tag_of(e.literal))
 			{
 				case NIL: buf.append("nil"); return;
-				case BOOL: buf.append(e.literal.bool_val ? "true" : "false"); return;
-				case NUMBER:
+				case BOOL: buf.append(as_bool(e.literal) ? "true" : "false"); return;
+				case NUM:
 				{
-					double n = e.literal.num_val;
+					double n = as_num(e.literal);
 					if (n == (double)(long)n)
 					{
 						buf.append(string::tformat("%d", (long)n));
@@ -328,7 +328,7 @@ fn void fmt_expr(DString* buf, AstNode* e, int indent)
 				}
 				case STRING:
 					buf.append_char('"');
-					buf.append(e.literal.str_val);
+					buf.append(*as_str(e.literal));
 					buf.append_char('"');
 					return;
 				default: buf.append("?lit?"); return;

@@ -96,15 +96,65 @@ fn TypeDefEntry* tenv_extend(TypeDefEntry* tenv, String name, Type type) {
 	e.next = tenv;
 	return e;
 }
-// 
-// The Value is a tagged union. Heap-allocated Array / Record / Closure / Prim
-// live behind a void* and are tracked with simple manual allocation for the
-// tree-walker phase. Reference counting comes in with the bytecode VM.
+// ============================================================================
+// NaN-BOXED VALUE
+// ============================================================================
+//
+// IEEE-754 quiet NaN has the exponent 0x7FF and a non-zero mantissa; we
+// define a sentinel `NAN_BITS = 0x7FF8...0` and pack type tags into the
+// upper 16 bits while leaving the low 48 bits for either a payload (bool)
+// or a 48-bit pointer (heap objects: Array, Record, Closure, Prim, String*).
+// Real doubles don't have all those bits set, so `v & NAN_BITS != NAN_BITS`
+// is the "is number" test.  Result: every Value fits in 8 bytes, so a
+// stack/cache line holds 8× more values than the old 40-byte struct.
 
-enum ValueType : char {
+typedef Value = ulong;
+
+const ulong NAN_BITS    = 0x7FF8000000000000UL;
+const ulong TAG_MASK    = 0xFFFF000000000000UL;
+const ulong PTR_MASK    = 0x0000FFFFFFFFFFFFUL;
+
+const ulong TAG_NIL     = 0x7FFC000000000000UL;
+const ulong TAG_BOOL    = 0x7FFD000000000000UL;
+const ulong TAG_STR     = 0x7FFE000000000000UL;
+const ulong TAG_ARRAY   = 0x7FFF000000000000UL;
+const ulong TAG_RECORD  = 0x8000000000000000UL;
+const ulong TAG_CLOSURE = 0x8001000000000000UL;
+const ulong TAG_PRIM    = 0x8002000000000000UL;
+
+fn Value val_num(double d)   => (Value)bitcast(d, ulong);
+fn Value val_nil()           => (Value)TAG_NIL;
+fn Value val_bool(bool b)    => (Value)(TAG_BOOL | (ulong)b);
+fn Value val_str(String* p)  => (Value)(TAG_STR    | ((ulong)(uptr)p & PTR_MASK));
+fn Value val_arr(Array* p)   => (Value)(TAG_ARRAY  | ((ulong)(uptr)p & PTR_MASK));
+fn Value val_rec(Record* p)  => (Value)(TAG_RECORD | ((ulong)(uptr)p & PTR_MASK));
+fn Value val_closure(Closure* p) => (Value)(TAG_CLOSURE | ((ulong)(uptr)p & PTR_MASK));
+fn Value val_prim(Prim* p)   => (Value)(TAG_PRIM   | ((ulong)(uptr)p & PTR_MASK));
+
+fn bool   is_num(Value v)    => ((ulong)v & NAN_BITS) != NAN_BITS;
+fn bool   is_nil(Value v)    => (ulong)v == TAG_NIL;
+fn bool   is_bool(Value v)   => ((ulong)v & TAG_MASK) == TAG_BOOL;
+fn bool   is_str(Value v)    => ((ulong)v & TAG_MASK) == TAG_STR;
+fn bool   is_arr(Value v)    => ((ulong)v & TAG_MASK) == TAG_ARRAY;
+fn bool   is_rec(Value v)    => ((ulong)v & TAG_MASK) == TAG_RECORD;
+fn bool   is_closure(Value v) => ((ulong)v & TAG_MASK) == TAG_CLOSURE;
+fn bool   is_prim(Value v)   => ((ulong)v & TAG_MASK) == TAG_PRIM;
+
+fn double   as_num(Value v)    => bitcast((ulong)v, double);
+fn bool     as_bool(Value v)   => (bool)((ulong)v & 1);
+fn String*  as_str(Value v)    => (String*)(uptr)((ulong)v & PTR_MASK);
+fn Array*   as_arr(Value v)    => (Array*)(uptr)((ulong)v & PTR_MASK);
+fn Record*  as_rec(Value v)    => (Record*)(uptr)((ulong)v & PTR_MASK);
+fn Closure* as_closure(Value v) => (Closure*)(uptr)((ulong)v & PTR_MASK);
+fn Prim*    as_prim(Value v)   => (Prim*)(uptr)((ulong)v & PTR_MASK);
+
+// Convenience tag enum for runtime type queries / debug printing.
+// Numeric values match the `ordinal()` of the old ValueType for tests
+// that asserted on a `.type.ordinal` field.
+enum ValueTag : int {
+	NUM,
 	NIL,
 	BOOL,
-	NUMBER,
 	STRING,
 	ARRAY,
 	RECORD,
@@ -112,12 +162,15 @@ enum ValueType : char {
 	PRIMITIVE,
 }
 
-struct Value {
-	ValueType type;
-	bool bool_val;
-	double num_val;
-	String str_val;
-	void* ptr_val;
+fn ValueTag tag_of(Value v) {
+	if (is_num(v))     return NUM;
+	if (is_nil(v))     return NIL;
+	if (is_bool(v))    return BOOL;
+	if (is_str(v))     return STRING;
+	if (is_arr(v))     return ARRAY;
+	if (is_rec(v))     return RECORD;
+	if (is_closure(v)) return CLOSURE;
+	return PRIMITIVE;
 }
 
 // ============================================================================
@@ -229,11 +282,28 @@ struct EvalResult {
 // CONSTRUCTORS
 // ============================================================================
 
-fn Value mk_nil() => { .type = NIL };
-fn Value mk_bool(bool b) => { .type = BOOL, .bool_val = b };
-fn Value mk_num(double n) => { .type = NUMBER, .num_val = n };
-fn Value mk_str(String s) => { .type = STRING, .str_val = s };
-fn Value mk_prim(String n) => { .type = PRIMITIVE, .str_val = n };
+fn Value mk_nil()    => val_nil();
+fn Value mk_bool(bool b)    => val_bool(b);
+fn Value mk_num(double n)   => val_num(n);
+
+// mk_str: box a string slice. The slice itself points to backing memory
+// (either static string literals or a heap-allocated concat buffer); the
+// 16-byte `String` struct we wrap it in lives in the temp pool and follows
+// the same lifetime as the slice. The Value only carries the 8-byte
+// pointer to the `String*`.
+fn Value mk_str(String s) {
+	String* p = mem::tnew(String);
+	*p = s;
+	return val_str(p);
+}
+
+// mk_prim: the prim carries a name; we now put the `Prim` struct on the
+// heap so the 8-byte Value can point at it.
+fn Value mk_prim(String n) {
+	Prim* p = mem::tnew(Prim);
+	p.name = n;
+	return val_prim(p);
+}
 
 fn Array* new_array() => mem::tnew(Array);
 fn Record* new_record() => mem::tnew(Record);
@@ -405,8 +475,8 @@ fn AstNode* make_methodcall(AstNode* recv, String name, AstNode*[] args) {
 // ============================================================================
 
 fn bool truthy(Value v) {
-	if (v.type == NIL) return false;
-	if (v.type == BOOL) return v.bool_val;
+	if (is_nil(v)) return false;
+	if (is_bool(v)) return as_bool(v);
 	return true;
 }
 
@@ -480,69 +550,76 @@ fn AstNode* make_match(AstNode* scrut, String[] tags, String[] binds, AstNode*[]
 }
 
 fn bool strict_eq(Value a, Value b) {
-	if (a.type != b.type) return false;
-	switch (a.type) {
-		case NIL: return true;
-		case BOOL: return a.bool_val == b.bool_val;
-		case NUMBER: return a.num_val == b.num_val;
-		case STRING: return a.str_val == b.str_val;
-		case PRIMITIVE: return a.str_val == b.str_val;
-		case ARRAY:
-		case RECORD:
-		case CLOSURE: return a.ptr_val == b.ptr_val;
+	if ((ulong)a != (ulong)b) {
+		// Different raw bits — could still be equal NaN numbers; we
+		// treat NaN-boxed identity as strict_eq at the bit level. Two
+		// numbers are equal iff their bits match (i.e. as_num is equal).
+		if (is_num(a) && is_num(b)) return as_num(a) == as_num(b);
+		// Strings compare content.
+		if (is_str(a) && is_str(b)) return *as_str(a) == *as_str(b);
+		// Primitives compare name.
+		if (is_prim(a) && is_prim(b)) return as_prim(a).name == as_prim(b).name;
+		// nil == nil handled by the raw-bit check above.
+		// Array/Record/Closure: same pointer (already covered by raw-bit).
+		return false;
 	}
-	return false;
+	// Raw bits equal — including same-pointer heap objects and identical
+	// small payloads.
+	return true;
 }
 
 fn Value show(Value v) {
-	switch (v.type) {
-		case NIL: return mk_str("nil");
-		case BOOL: return mk_str(v.bool_val ? "true" : "false");
-		case NUMBER:
-			if (v.num_val == (double)(long)v.num_val) {
-				return mk_str(string::tformat("%d", (long)v.num_val));
-			}
-			return mk_str(string::tformat("%s", v.num_val));
-		case STRING: return mk_str(string::tformat("%s", v.str_val));
-		case ARRAY:
-			Array* a = (Array*)v.ptr_val;
-			DString buf;
-			buf.init(mem);
-			buf.append_char('[');
-			for (int i = 0; i < a.items.len; i++) {
-				if (i > 0) buf.append(", ");
-				Value s = show(a.items[i]);
-				buf.append(s.str_val);
-			}
-			buf.append_char(']');
-			return mk_str(buf.str_view());
-		case RECORD:
-			Record* r = (Record*)v.ptr_val;
-			DString buf;
-			buf.init(mem);
-			buf.append_char('{');
-			for (int i = 0; i < r.keys.len; i++) {
-				if (i > 0) buf.append(", ");
-				buf.append(r.keys[i]);
-				buf.append(": ");
-				Value s = show(r.values[i]);
-				buf.append(s.str_val);
-			}
-			buf.append_char('}');
-			return mk_str(buf.str_view());
-		case CLOSURE:
-			Closure* c = (Closure*)v.ptr_val;
-			DString buf;
-			buf.init(mem);
-			buf.append("<closure(");
-			for (int i = 0; i < c.params.len; i++) {
-				if (i > 0) buf.append(", ");
-				buf.append(c.params[i]);
-			}
-			buf.append(")>");
-			return mk_str(buf.str_view());
-		case PRIMITIVE: return mk_str(string::tformat("<prim %s>", v.str_val));
+	if (is_nil(v)) return mk_str("nil");
+	if (is_bool(v)) return mk_str(as_bool(v) ? "true" : "false");
+	if (is_num(v)) {
+		double n = as_num(v);
+		if (n == (double)(long)n) {
+			return mk_str(string::tformat("%d", (long)n));
+		}
+		return mk_str(string::tformat("%s", n));
 	}
+	if (is_str(v)) return mk_str(string::tformat("%s", *as_str(v)));
+	if (is_arr(v)) {
+		Array* a = as_arr(v);
+		DString buf;
+		buf.init(mem);
+		buf.append_char('[');
+		for (int i = 0; i < a.items.len; i++) {
+			if (i > 0) buf.append(", ");
+			Value s = show(a.items[i]);
+			buf.append(*as_str(s));
+		}
+		buf.append_char(']');
+		return mk_str(buf.str_view());
+	}
+	if (is_rec(v)) {
+		Record* r = as_rec(v);
+		DString buf;
+		buf.init(mem);
+		buf.append_char('{');
+		for (int i = 0; i < r.keys.len; i++) {
+			if (i > 0) buf.append(", ");
+			buf.append(r.keys[i]);
+			buf.append(": ");
+			Value s = show(r.values[i]);
+			buf.append(*as_str(s));
+		}
+		buf.append_char('}');
+		return mk_str(buf.str_view());
+	}
+	if (is_closure(v)) {
+		Closure* c = as_closure(v);
+		DString buf;
+		buf.init(mem);
+		buf.append("<closure(");
+		for (int i = 0; i < c.params.len; i++) {
+			if (i > 0) buf.append(", ");
+			buf.append(c.params[i]);
+		}
+		buf.append(")>");
+		return mk_str(buf.str_view());
+	}
+	if (is_prim(v)) return mk_str(string::tformat("<prim %s>", as_prim(v).name));
 	return mk_nil();
 }
 
@@ -607,87 +684,87 @@ fn void env_set(Env* env, String name, Value v) {
 fn EvalResult prim_dispatch(String name, Value[] args) {
 	switch (name) {
 		case "+":
-			if (args[0].type == NUMBER && args[1].type == NUMBER) {
-				return { .value = mk_num(args[0].num_val + args[1].num_val) };
+			if (is_num(args[0]) && is_num(args[1])) {
+				return { .value = mk_num(as_num(args[0]) + as_num(args[1])) };
 			}
-			if (args[0].type == STRING && args[1].type == STRING) {
-				return { .value = mk_str(args[0].str_val.tconcat(args[1].str_val)) };
+			if (is_str(args[0]) && is_str(args[1])) {
+				return { .value = mk_str((*as_str(args[0])).tconcat(*as_str(args[1]))) };
 			}
 			return { .thrown = true, .value = mk_str("type error: + expects number or string") };
 		case "-":
-			if (args[0].type != NUMBER || args[1].type != NUMBER) {
+			if (!is_num(args[0]) || !is_num(args[1])) {
 				return { .thrown = true, .value = mk_str("type error: - expects numbers") };
 			}
-			return { .value = mk_num(args[0].num_val - args[1].num_val) };
+			return { .value = mk_num(as_num(args[0]) - as_num(args[1])) };
 		case "*":
-			if (args[0].type != NUMBER || args[1].type != NUMBER) {
+			if (!is_num(args[0]) || !is_num(args[1])) {
 				return { .thrown = true, .value = mk_str("type error: * expects numbers") };
 			}
-			return { .value = mk_num(args[0].num_val * args[1].num_val) };
+			return { .value = mk_num(as_num(args[0]) * as_num(args[1])) };
 		case "/":
-			if (args[0].type != NUMBER || args[1].type != NUMBER) {
+			if (!is_num(args[0]) || !is_num(args[1])) {
 				return { .thrown = true, .value = mk_str("type error: / expects numbers") };
 			}
-			if (args[1].num_val == 0.0) {
+			if (as_num(args[1]) == 0.0) {
 				return { .thrown = true, .value = mk_str("division by zero") };
 			}
-			return { .value = mk_num(args[0].num_val / args[1].num_val) };
+			return { .value = mk_num(as_num(args[0]) / as_num(args[1])) };
 		case "===":
 			return { .value = mk_bool(strict_eq(args[0], args[1])) };
 		case "<":
-			if (args[0].type != NUMBER || args[1].type != NUMBER) {
+			if (!is_num(args[0]) || !is_num(args[1])) {
 				return { .thrown = true, .value = mk_str("type error: < expects numbers") };
 			}
-			return { .value = mk_bool(args[0].num_val < args[1].num_val) };
+			return { .value = mk_bool(as_num(args[0]) < as_num(args[1])) };
 		case ">":
-			if (args[0].type != NUMBER || args[1].type != NUMBER) {
+			if (!is_num(args[0]) || !is_num(args[1])) {
 				return { .thrown = true, .value = mk_str("type error: > expects numbers") };
 			}
-			return { .value = mk_bool(args[0].num_val > args[1].num_val) };
+			return { .value = mk_bool(as_num(args[0]) > as_num(args[1])) };
 		case "<=":
-			if (args[0].type != NUMBER || args[1].type != NUMBER) {
+			if (!is_num(args[0]) || !is_num(args[1])) {
 				return { .thrown = true, .value = mk_str("type error: <= expects numbers") };
 			}
-			return { .value = mk_bool(args[0].num_val <= args[1].num_val) };
+			return { .value = mk_bool(as_num(args[0]) <= as_num(args[1])) };
 		case ">=":
-			if (args[0].type != NUMBER || args[1].type != NUMBER) {
+			if (!is_num(args[0]) || !is_num(args[1])) {
 				return { .thrown = true, .value = mk_str("type error: >= expects numbers") };
 			}
-			return { .value = mk_bool(args[0].num_val >= args[1].num_val) };
+			return { .value = mk_bool(as_num(args[0]) >= as_num(args[1])) };
 		case "and":
 			return { .value = truthy(args[0]) ? args[1] : args[0] };
 		case "or":
 			return { .value = truthy(args[0]) ? args[0] : args[1] };
-		case "is_number": return { .value = mk_bool(args[0].type == NUMBER) };
-		case "is_string": return { .value = mk_bool(args[0].type == STRING) };
-		case "is_bool": return { .value = mk_bool(args[0].type == BOOL) };
-		case "is_array": return { .value = mk_bool(args[0].type == ARRAY) };
-		case "is_record": return { .value = mk_bool(args[0].type == RECORD) };
-		case "is_nil": return { .value = mk_bool(args[0].type == NIL) };
+		case "is_number": return { .value = mk_bool(is_num(args[0])) };
+		case "is_string": return { .value = mk_bool(is_str(args[0])) };
+		case "is_bool":   return { .value = mk_bool(is_bool(args[0])) };
+		case "is_array":  return { .value = mk_bool(is_arr(args[0])) };
+		case "is_record": return { .value = mk_bool(is_rec(args[0])) };
+		case "is_nil":    return { .value = mk_bool(is_nil(args[0])) };
 		case "has_field":
-			if (args[0].type != RECORD) {
+			if (!is_rec(args[0])) {
 				return { .thrown = true, .value = mk_str("type error: has_field expects record") };
 			}
-			Record* r = (Record*)args[0].ptr_val;
-			String k = args[1].str_val;
+			Record* r = as_rec(args[0]);
+			String k = *as_str(args[1]);
 			foreach (&key : r.keys) {
 				if (*key == k) return { .value = mk_bool(true) };
 			}
 			return { .value = mk_bool(false) };
 		case "len":
-			if (args[0].type == ARRAY) {
-				Array* a = (Array*)args[0].ptr_val;
+			if (is_arr(args[0])) {
+				Array* a = as_arr(args[0]);
 				return { .value = mk_num((double)a.items.len) };
 			}
-			if (args[0].type == STRING) {
-				return { .value = mk_num((double)args[0].str_val.len) };
+			if (is_str(args[0])) {
+				return { .value = mk_num((double)(*as_str(args[0])).len) };
 			}
 			return { .thrown = true, .value = mk_str("type error: len expects array or string") };
 		case "push":
-			if (args[0].type != ARRAY) {
+			if (!is_arr(args[0])) {
 				return { .thrown = true, .value = mk_str("type error: push expects array") };
 			}
-			Array* a = (Array*)args[0].ptr_val;
+			Array* a = as_arr(args[0]);
 			Value[] grown = mem::talloc_array(Value, a.items.len + 1);
 			for (int i = 0; i < a.items.len; i++) grown[i] = a.items[i];
 			grown[a.items.len] = args[1];
@@ -695,33 +772,33 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 			return { .value = mk_nil() };
 		case "array_all":
 
-			{
-				// array_all(arr, pred)  =>  true if pred(x) is truthy for every x in arr
-				if (args[0].type != ARRAY) {
-					return { .thrown = true, .value = mk_str("type error: array_all expects array") };
-				}
-				if (args[1].type != CLOSURE) {
-					return { .thrown = true, .value = mk_str("type error: array_all expects closure") };
-				}
-				Array* a = (Array*)args[0].ptr_val;
-				foreach (&item : a.items) {
-					EvalResult r = apply_fn(args[1], { *item });
-					if (r.thrown) return r;
-					if (!truthy(r.value)) return { .value = mk_bool(false) };
-				}
-				return { .value = mk_bool(true) };
+		{
+			// array_all(arr, pred)  =>  true if pred(x) is truthy for every x in arr
+			if (!is_arr(args[0])) {
+				return { .thrown = true, .value = mk_str("type error: array_all expects array") };
 			}
+			if (!is_closure(args[1])) {
+				return { .thrown = true, .value = mk_str("type error: array_all expects closure") };
+			}
+			Array* a = as_arr(args[0]);
+			foreach (&item : a.items) {
+				EvalResult r = apply_fn(args[1], { *item });
+				if (r.thrown) return r;
+				if (!truthy(r.value)) return { .value = mk_bool(false) };
+			}
+			return { .value = mk_bool(true) };
+		}
 		case "slice":
 		{
 			// slice(arr, start, end)  =>  a fresh array of arr[start..end].
 			// start and end are numbers; end of -1 means "to the end".
-			if (args[0].type != ARRAY) {
+			if (!is_arr(args[0])) {
 				return { .thrown = true, .value = mk_str("type error: slice expects array") };
 			}
-			Array* a = (Array*)args[0].ptr_val;
+			Array* a = as_arr(args[0]);
 			long len = (long)a.items.len;
-			long start = (long)args[1].num_val;
-			long end   = (long)args[2].num_val;
+			long start = (long)as_num(args[1]);
+			long end   = (long)as_num(args[2]);
 			if (start < 0) start = len + start;
 			if (end   < 0) end   = len;
 			if (start < 0)         start = 0;
@@ -733,15 +810,12 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 			for (long i = 0; i < n; i++) out[i] = a.items[start + i];
 			Array* r = new_array();
 			r.items = out;
-			Value v;
-			v.type = ARRAY;
-			v.ptr_val = r;
-			return { .value = v };
+			return { .value = val_arr(r) };
 		}
 		case "print":
 			foreach (arg : args) {
 				Value s = show(arg);
-				io::printn(s.str_val);
+				io::printn(*as_str(s));
 			}
 			return { .value = mk_nil() };
 	}
@@ -1109,11 +1183,11 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 // ============================================================================
 
 fn EvalResult apply_fn(Value fn_val, Value[] args) {
-	if (fn_val.type == PRIMITIVE) {
-		return prim_dispatch(fn_val.str_val, args);
+	if (is_prim(fn_val)) {
+		return prim_dispatch(as_prim(fn_val).name, args);
 	}
-	if (fn_val.type == CLOSURE) {
-		Closure* c = (Closure*)fn_val.ptr_val;
+	if (is_closure(fn_val)) {
+		Closure* c = as_closure(fn_val);
 		if (args.len != c.params.len) {
 			return {
 				.thrown = true,
@@ -1143,187 +1217,172 @@ fn EvalResult eval(AstNode* node, Env* env) {
 			return { .value = v };
 		case LAMBDA:
 
-			{
-				Closure* c = new_closure();
-				c.params = node.names;
-				c.body = node.children[0];
-				c.env = env;
-				Value v;
-				v.type = CLOSURE;
-				v.ptr_val = c;
-				return { .value = v };
-			}
+		{
+			Closure* c = new_closure();
+			c.params = node.names;
+			c.body = node.children[0];
+			c.env = env;
+			return { .value = val_closure(c) };
+		}
 		case CALL:
 
-			{
-				EvalResult fn_r = eval(node.children[0], env);
-				if (fn_r.thrown) return fn_r;
-				// Evaluate args in order, short-circuiting on throw.
-				AstNode*[] arg_nodes = node.children[1..];
-				Value[] args         = mem::talloc_array(Value, arg_nodes.len);
-				for (int i = 0; i < arg_nodes.len; i++) {
-					EvalResult a = eval(arg_nodes[i], env);
-					if (a.thrown) return a;
-					args[i] = a.value;
-				}
-				return apply_fn(fn_r.value, args);
+		{
+			EvalResult fn_r = eval(node.children[0], env);
+			if (fn_r.thrown) return fn_r;
+			// Evaluate args in order, short-circuiting on throw.
+			AstNode*[] arg_nodes = node.children[1..];
+			Value[] args         = mem::talloc_array(Value, arg_nodes.len);
+			for (int i = 0; i < arg_nodes.len; i++) {
+				EvalResult a = eval(arg_nodes[i], env);
+				if (a.thrown) return a;
+				args[i] = a.value;
 			}
+			return apply_fn(fn_r.value, args);
+		}
 		case IF:
 
-			{
-				EvalResult c = eval(node.children[0], env);
-				if (c.thrown) return c;
-				if (truthy(c.value)) return eval(node.children[1], env);
-				return eval(node.children[2], env);
-			}
+		{
+			EvalResult c = eval(node.children[0], env);
+			if (c.thrown) return c;
+			if (truthy(c.value)) return eval(node.children[1], env);
+			return eval(node.children[2], env);
+		}
 		case GET:
 
-			{
-				EvalResult o = eval(node.children[0], env);
-				if (o.thrown) return o;
-				EvalResult k = eval(node.children[1], env);
-				if (k.thrown) return k;
-				if (o.value.type == ARRAY) {
-					if (k.value.type != NUMBER) {
-						return { .thrown = true, .value = mk_str("type error: array index must be number") };
-					}
-					Array* a = (Array*)o.value.ptr_val;
-					long idx = (long)k.value.num_val;
-					if (idx < 0 || (sz)idx >= a.items.len) {
-						return { .thrown = true, .value = mk_str("index out of bounds") };
-					}
-					return { .value = a.items[idx] };
+		{
+			EvalResult o = eval(node.children[0], env);
+			if (o.thrown) return o;
+			EvalResult k = eval(node.children[1], env);
+			if (k.thrown) return k;
+			if (is_arr(o.value)) {
+				if (!is_num(k.value)) {
+					return { .thrown = true, .value = mk_str("type error: array index must be number") };
 				}
-				if (o.value.type == RECORD) {
-					if (k.value.type != STRING) {
-						return { .thrown = true, .value = mk_str("type error: record key must be string") };
-					}
-					Record* r  = (Record*)o.value.ptr_val;
-					String key = k.value.str_val;
-					foreach (i, &rk : r.keys) {
-						if (*rk == key) return { .value = r.values[i] };
-					}
-					return { .thrown = true, .value = mk_str(string::tformat("no field '%s'", key)) };
+				Array* a = as_arr(o.value);
+				long idx = (long)as_num(k.value);
+				if (idx < 0 || (sz)idx >= a.items.len) {
+					return { .thrown = true, .value = mk_str("index out of bounds") };
 				}
-				return { .thrown = true, .value = mk_str("cannot index value") };
+				return { .value = a.items[idx] };
 			}
+			if (is_rec(o.value)) {
+				if (!is_str(k.value)) {
+					return { .thrown = true, .value = mk_str("type error: record key must be string") };
+				}
+				Record* r  = as_rec(o.value);
+				String key = *as_str(k.value);
+				foreach (i, &rk : r.keys) {
+					if (*rk == key) return { .value = r.values[i] };
+				}
+				return { .thrown = true, .value = mk_str(string::tformat("no field '%s'", key)) };
+			}
+			return { .thrown = true, .value = mk_str("cannot index value") };
+		}
 		case SET:
 
-			{
-				EvalResult o = eval(node.children[0], env);
-				if (o.thrown) return o;
-				EvalResult k = eval(node.children[1], env);
-				if (k.thrown) return k;
-				EvalResult v = eval(node.children[2], env);
-				if (v.thrown) return v;
-				if (o.value.type == ARRAY) {
-					if (k.value.type != NUMBER) {
-						return { .thrown = true, .value = mk_str("type error: array index must be number") };
-					}
-					Array* a = (Array*)o.value.ptr_val;
-					long idx = (long)k.value.num_val;
-					if (idx < 0 || (sz)idx >= a.items.len) {
-						return { .thrown = true, .value = mk_str("index out of bounds") };
-					}
-					a.items[idx] = v.value;
-					return { .value = v.value };
+		{
+			EvalResult o = eval(node.children[0], env);
+			if (o.thrown) return o;
+			EvalResult k = eval(node.children[1], env);
+			if (k.thrown) return k;
+			EvalResult v = eval(node.children[2], env);
+			if (v.thrown) return v;
+			if (is_arr(o.value)) {
+				if (!is_num(k.value)) {
+					return { .thrown = true, .value = mk_str("type error: array index must be number") };
 				}
-				if (o.value.type == RECORD) {
-					if (k.value.type != STRING) {
-						return { .thrown = true, .value = mk_str("type error: record key must be string") };
-					}
-					Record* r  = (Record*)o.value.ptr_val;
-					String key = k.value.str_val;
-					foreach (i, &rk : r.keys) {
-						if (*rk == key) {
-							r.values[i] = v.value;
-							return { .value = v.value };
-						}
-					}
-					// new key: append
-					String[] nk = mem::talloc_array(String, r.keys.len + 1);
-					Value[] nv  = mem::talloc_array(Value, r.values.len + 1);
-					for (int j = 0; j < r.keys.len; j++) {
-						nk[j] = r.keys[j];
-						nv[j] = r.values[j];
-					}
-					nk[r.keys.len] = key;
-					nv[r.values.len] = v.value;
-					r.keys = nk;
-					r.values = nv;
-					return { .value = v.value };
+				Array* a = as_arr(o.value);
+				long idx = (long)as_num(k.value);
+				if (idx < 0 || (sz)idx >= a.items.len) {
+					return { .thrown = true, .value = mk_str("index out of bounds") };
 				}
-				return { .thrown = true, .value = mk_str("cannot set on value") };
+				a.items[idx] = v.value;
+				return { .value = v.value };
 			}
+			if (is_rec(o.value)) {
+				if (!is_str(k.value)) {
+					return { .thrown = true, .value = mk_str("type error: record key must be string") };
+				}
+				Record* r  = as_rec(o.value);
+				String key = *as_str(k.value);
+				foreach (i, &rk : r.keys) {
+					if (*rk == key) {
+						r.values[i] = v.value;
+						return { .value = v.value };
+					}
+				}
+				// new key: append
+				String[] nk = mem::talloc_array(String, r.keys.len + 1);
+				Value[] nv  = mem::talloc_array(Value, r.values.len + 1);
+				for (int j = 0; j < r.keys.len; j++) {
+					nk[j] = r.keys[j];
+					nv[j] = r.values[j];
+				}
+				nk[r.keys.len] = key;
+				nv[r.values.len] = v.value;
+				r.keys = nk;
+				r.values = nv;
+				return { .value = v.value };
+			}
+			return { .thrown = true, .value = mk_str("cannot set on value") };
+		}
 		case RECORD:
 
-			{
-				Record* r = new_record();
-				r.keys = node.names;
-				Value[] vals = mem::talloc_array(Value, node.children.len);
-				for (int i = 0; i < node.children.len; i++) {
-					EvalResult e = eval(node.children[i], env);
-					if (e.thrown) return e;
-					vals[i] = e.value;
-				}
-				r.values = vals;
-				Value v;
-				v.type = RECORD;
-				v.ptr_val = r;
-				return { .value = v };
+		{
+			Record* r = new_record();
+			r.keys = node.names;
+			Value[] vals = mem::talloc_array(Value, node.children.len);
+			for (int i = 0; i < node.children.len; i++) {
+				EvalResult e = eval(node.children[i], env);
+				if (e.thrown) return e;
+				vals[i] = e.value;
 			}
+			r.values = vals;
+			return { .value = val_rec(r) };
+		}
 		case ARRAY_LIT:
 
-			{
-				Array* a      = new_array();
-				Value[] items = mem::talloc_array(Value, node.children.len);
-				for (int i = 0; i < node.children.len; i++) {
-					EvalResult e = eval(node.children[i], env);
-					if (e.thrown) return e;
-					items[i] = e.value;
-				}
-				a.items = items;
-				Value v;
-				v.type = ARRAY;
-				v.ptr_val = a;
-				return { .value = v };
+		{
+			Array* a      = new_array();
+			Value[] items = mem::talloc_array(Value, node.children.len);
+			for (int i = 0; i < node.children.len; i++) {
+				EvalResult e = eval(node.children[i], env);
+				if (e.thrown) return e;
+				items[i] = e.value;
 			}
+			a.items = items;
+			return { .value = val_arr(a) };
+		}
 		case THROW:
 
-			{
-				EvalResult v = eval(node.children[0], env);
-				// v.value is the thrown value regardless of v.thrown (we just propagate).
-
-
-
-				return { .thrown = true, .value = v.value };
-			}
+		{
+			EvalResult v = eval(node.children[0], env);
+			// v.value is the thrown value regardless of v.thrown (we just propagate).
+			return { .thrown = true, .value = v.value };
+		}
 		case TRY:
 
-			{
-				EvalResult b = eval(node.children[0], env);
-				if (!b.thrown) return b;
-				Env* h = env_define(env, node.name, b.value);
-				return eval(node.children[1], h);
-			}
+		{
+			EvalResult b = eval(node.children[0], env);
+			if (!b.thrown) return b;
+			Env* h = env_define(env, node.name, b.value);
+			return eval(node.children[1], h);
+		}
 		case PRIM:
 
-			{
-				Value v;
-				v.type = PRIMITIVE;
-				v.str_val = node.name;
-				return { .value = v };
-			}
+		{
+			return { .value = mk_prim(node.name) };
+		}
 		case LETREC:
 
-			{
-				Env* rec        = env_define(env, node.name, mk_nil());
-				EvalResult init = eval(node.children[0], rec);
-				if (init.thrown) return init;
-				// Patch the binding with the actual value so the closure can see itself.
-				rec.map.set(node.name, init.value);
-				return eval(node.children[1], rec);
-			}
+		{
+			Env* rec        = env_define(env, node.name, mk_nil());
+			EvalResult init = eval(node.children[0], rec);
+			if (init.thrown) return init;
+			// Patch the binding with the actual value so the closure can see itself.
+			rec.map.set(node.name, init.value);
+			return eval(node.children[1], rec);
+		}
 		case SEQ:
 		case BINOP:
 		case METHODCALL:
@@ -1375,11 +1434,11 @@ fn Value run(AstNode* node) {
 		EvalResult r = eval(node, builtin_env);
 		if (r.thrown) {
 			Value s = show(r.value);
-			io::printfn("threw: %s", s.str_val);
+			io::printfn("threw: %s", *as_str(s));
 			return mk_nil();
 		}
 		Value s = show(r.value);
-		io::printn(s.str_val);
+		io::printn(*as_str(s));
 		return r.value;
 	};
 }

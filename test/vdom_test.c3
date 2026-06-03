@@ -23,8 +23,8 @@ let page = <h name="div" class="container">
 </h>;
 render(page)`;
 	Value v = run_parsed(src);
-	assert(v.type == STRING);
-	assert(v.str_val == "<div><h1>Hello, vdom!</h1><p>A paragraph.</p></div>");
+	assert(is_str(v));
+	assert(*as_str(v) == "<div><h1>Hello, vdom!</h1><p>A paragraph.</p></div>");
 }
 
 fn void test_vdom_text_node() @test
@@ -34,26 +34,26 @@ let h = fn(attrs, kids) { { name: attrs.name, attrs: attrs, kids: wrap(kids) } }
 let render = fn(v) { if v.name === "text" then v.kids[0] else v.kids[0] };
 render(<h name="text">"hi"</h>)`;
 	Value v = run_parsed(src);
-	assert(v.type == STRING);
-	assert(v.str_val == "hi");
+	assert(is_str(v));
+	assert(*as_str(v) == "hi");
 }
 
 fn void test_builtin_len() @test
 {
 	Value v = run_parsed("len([1, 2, 3])");
-	assert(v.type == NUMBER);
-	assert(v.num_val == 3.0);
+	assert(is_num(v));
+	assert(as_num(v) == 3.0);
 }
 
 fn void test_builtin_slice() @test
 {
 	Value v = run_parsed("[10, 20, 30, 40, 50][2..]");
-	assert(v.type == ARRAY);
+	assert(is_arr(v));
 }
 
 fn void test_builtin_slice_open() @test
 {
 	Value v = run_parsed("[10, 20, 30][1..][0]");
-	assert(v.type == NUMBER);
-	assert(v.num_val == 20.0);
+	assert(is_num(v));
+	assert(as_num(v) == 20.0);
 }

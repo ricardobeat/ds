@@ -2,10 +2,7 @@
 
 ## Project Overview
 
-A JS variant interpreter written in C3 (systems language by Christoffer Lernö). The design follows a minimal expression-oriented approach with a tiny kernel (~12 AST nodes) and surface features that desugar into it.
-
-**Language**: C3 0.8.0 (LLVM backend)  
-**Build system**: `c3c` (C3 compiler)
+A JS variant interpreter written in C3. The design follows a minimal expression-oriented approach with a tiny kernel (~12 AST nodes) and surface features that desugar into it.
 
 ## Build Commands
 
@@ -24,7 +21,7 @@ Output binary: `build/engine`
 
 Javascript-like. No ASI. Surface features (let, seq, binop, method calls,
 typed functions, sum types, pattern matching, and JSX-like elements) all
-desugar to the ~12-node kernel before the evaluator runs.
+desugar to the small kernel before the evaluator runs.
 
 ## Project Structure
 
@@ -86,14 +83,8 @@ The Python reference (`reference/engine.py`) is the source of truth for semantic
 2. Understand the desugaring rules
 3. Port to C3 with appropriate memory management
 
-Key functions in reference:
-- `desugar(e, tenv)` - Surface → Kernel transformation
-- `eval_kernel(e, env)` - Kernel evaluator
-- `apply_fn(fn, args)` - Function application (closure or primitive)
-
 ## What's Explicitly Out of Scope
 
-- Type inference, unification, generics
 - `var`/hoisting, ASI, `with`, `==`/coercion, prototypes
 - `this`, `arguments`, sloppy mode
 - Host/web APIs (embedder provides those)
