@@ -402,10 +402,10 @@ fn void test_sample_greet_both() @test {
 fn void test_rung1_typed_function_good() @test {
 	@pool() {
 		// let add = fn(x: Int, y: Int): Int { x + y }; add(3, 4)  =>  7
-		Type* int_t = mem::new(Type);
+		Type* int_t = mem::tnew(Type);
 		*int_t = mk_tname("Int");
 		AstNode* body = make_binop_node("+", make_var("x"), make_var("y"));
-		Type*[] pts   = mem::new_array(Type*, 2);
+		Type*[] pts   = mem::talloc_array(Type*, 2);
 		pts[0] = int_t;
 		pts[1] = int_t;
 		AstNode* add_fn = make_typed_lambda({ "x", "y" }, pts, int_t, body);
@@ -424,10 +424,10 @@ fn void test_rung1_typed_function_good() @test {
 fn void test_rung1_typed_function_bad() @test {
 	@pool() {
 		// add(3, "oops")  -> thrown
-		Type* int_t = mem::new(Type);
+		Type* int_t = mem::tnew(Type);
 		*int_t = mk_tname("Int");
 		AstNode* body = make_binop_node("+", make_var("x"), make_var("y"));
-		Type*[] pts   = mem::new_array(Type*, 2);
+		Type*[] pts   = mem::talloc_array(Type*, 2);
 		pts[0] = int_t;
 		pts[1] = int_t;
 		AstNode* add_fn = make_typed_lambda({ "x", "y" }, pts, int_t, body);
@@ -447,17 +447,17 @@ fn void test_rung1_typed_function_bad() @test {
 fn void test_rung1_typed_record_good() @test {
 	@pool() {
 		// fn(p: {x:Int, y:Int}): Int { p.x + p.y }; f({x:3, y:4})  =>  7
-		Type* int_t = mem::new(Type);
+		Type* int_t = mem::tnew(Type);
 		*int_t = mk_tname("Int");
 		Type pt    = mk_trecord({ "x", "y" }, { *int_t, *int_t });
-		Type* pt_p = mem::new(Type);
+		Type* pt_p = mem::tnew(Type);
 		*pt_p = pt;
 		AstNode* body = make_binop_node(
 			"+",
 			make_get(make_var("p"), make_lit(mk_str("x"))),
 			make_get(make_var("p"), make_lit(mk_str("y")))
 		);
-		Type*[] pts = mem::new_array(Type*, 1);
+		Type*[] pts = mem::talloc_array(Type*, 1);
 		pts[0] = pt_p;
 		AstNode* f    = make_typed_lambda({ "p" }, pts, int_t, body);
 		AstNode* arg  = make_record({ "x", "y" }, { make_lit(mk_num(3.0)), make_lit(mk_num(4.0)) });
@@ -471,17 +471,17 @@ fn void test_rung1_typed_record_good() @test {
 fn void test_rung1_typed_record_missing() @test {
 	@pool() {
 		// fn(p: {x:Int, y:Int}): Int { p.x + p.y }; f({x:3})  => throws
-		Type* int_t = mem::new(Type);
+		Type* int_t = mem::tnew(Type);
 		*int_t = mk_tname("Int");
 		Type pt    = mk_trecord({ "x", "y" }, { *int_t, *int_t });
-		Type* pt_p = mem::new(Type);
+		Type* pt_p = mem::tnew(Type);
 		*pt_p = pt;
 		AstNode* body = make_binop_node(
 			"+",
 			make_get(make_var("p"), make_lit(mk_str("x"))),
 			make_get(make_var("p"), make_lit(mk_str("y")))
 		);
-		Type*[] pts = mem::new_array(Type*, 1);
+		Type*[] pts = mem::talloc_array(Type*, 1);
 		pts[0] = pt_p;
 		AstNode* f    = make_typed_lambda({ "p" }, pts, int_t, body);
 		AstNode* arg  = make_record({ "x" }, { make_lit(mk_num(3.0)) });
@@ -498,7 +498,7 @@ fn void test_rung2_sum_match() @test {
 		// area = fn(sh) { match sh { Circle(c) => 3*c.radius*c.radius
 		//                          Rectangle(r) => r.w * r.h } }
 		// area(Circle({radius:10})) + area(Rectangle({w:4, h:5}))  =>  320
-		Type* int_t = mem::new(Type);
+		Type* int_t = mem::tnew(Type);
 		*int_t = mk_tname("Int");
 		AstNode* area = make_lambda(
 			{ "sh" },
@@ -542,7 +542,7 @@ fn void test_rung2_sum_match() @test {
 fn void test_rung2_match_non_exhaustive() @test {
 	@pool() {
 		// Same area function as above, but call with a Triangle -> throws
-		Type* int_t = mem::new(Type);
+		Type* int_t = mem::tnew(Type);
 		*int_t = mk_tname("Int");
 		AstNode* area = make_lambda(
 			{ "sh" },

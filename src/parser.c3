@@ -399,9 +399,9 @@ fn void parser_set_error(Parser* p, String msg)
 {
 	if (p.error) return;
 	p.error = true;
-	// DString (no tinit) uses the heap allocator — the slice stays valid past
-	// this function's stack frame, unlike a temp-allocated one.
-	DString buf; buf.init(mem);
+	// tinit uses the temp allocator — the slice stays valid as long as
+	// the enclosing @pool() scope is alive.
+	DString buf; buf.tinit();
 	Token t = parser_cur(p);
 	buf.appendf("parse error at line %d col %d: %s (got '%s')", t.line + 1, t.col + 1, msg, t.text);
 	p.error_msg = buf.str_view();
@@ -433,7 +433,7 @@ fn Type* parse_type(Parser* p)
 	{
 		String n = parser_cur(p).text;
 		parser_advance(p);
-		Type* t = mem::new(Type);
+		Type* t = mem::tnew(Type);
 		*t = mk_tname(n);
 		while (parser_check(p, TK_LBRACK))
 		{
@@ -444,7 +444,7 @@ fn Type* parse_type(Parser* p)
 				return t;
 			}
 			Type* inner = t;
-			t = mem::new(Type);
+			t = mem::tnew(Type);
 			*t = mk_tarray(*inner);
 		}
 		return t;
@@ -471,8 +471,8 @@ fn Type* parse_type(Parser* p)
 			}
 			Type* ft = parse_type(p);
 			if (ft == null) return null;
-			String[] nk = mem::new_array(String, (sz)(n + 1));
-			Type*[] nt = mem::new_array(Type*, (sz)(n + 1));
+			String[] nk = mem::talloc_array(String, (sz)(n + 1));
+			Type*[] nt = mem::talloc_array(Type*, (sz)(n + 1));
 			for (int i = 0; i < n; i++) { nk[i] = keys[i]; nt[i] = types[i]; }
 			nk[n] = fname;
 			nt[n] = ft;
@@ -486,7 +486,7 @@ fn Type* parse_type(Parser* p)
 			parser_set_error(p, "expected '}' to close record type");
 			return null;
 		}
-		Type* t = mem::new(Type);
+		Type* t = mem::tnew(Type);
 		*t = mk_trecord_ptr(keys, types);
 		return t;
 	}
@@ -494,7 +494,7 @@ fn Type* parse_type(Parser* p)
 	{
 		String n = parser_cur(p).text;
 		parser_advance(p);
-		Type* t = mem::new(Type);
+		Type* t = mem::tnew(Type);
 		*t = mk_tname(n);
 		while (parser_check(p, TK_LBRACK))
 		{
@@ -505,7 +505,7 @@ fn Type* parse_type(Parser* p)
 				return t;
 			}
 			Type* inner = t;
-			t = mem::new(Type);
+			t = mem::tnew(Type);
 			*t = mk_tarray(*inner);
 		}
 		return t;
@@ -621,11 +621,12 @@ fn AstNode* parse_unary(Parser* p)
 //
 //   <Foo />                       =>  Foo({})
 //   <Foo bar="x" />               =>  Foo({bar: "x"})
-//   <Foo bar="x">a</Foo>          =>  Foo({bar: "x"}, a)
-//   <Foo bar="x">a, b, c</Foo>    =>  Foo({bar: "x"}, a, b, c)
+//   <Foo bar="x">a</Foo>          =>  Foo({bar: "x"}, [a])
+//   <Foo bar="x">a, b, c</Foo>    =>  Foo({bar: "x"}, [a, b, c])
+//   <Foo bar="x">a b c</Foo>      =>  Foo({bar: "x"}, [a, b, c])
 //
 // Attribute values are limited to literals (string, number, bool, identifier)
-// for v1.  Children are full expressions, comma-separated.
+// for v1.  Children are full expressions, whitespace or comma separated.
 // ---------------------------------------------------------------------------
 
 fn AstNode* parse_element(Parser* p)
@@ -683,8 +684,8 @@ fn AstNode* parse_element(Parser* p)
 			parser_set_error(p, "expected attribute value (string, number, bool, or ident)");
 			return make_call(make_var(tag), { make_record({}, {}) });
 		}
-		String[] nk = mem::new_array(String, (sz)(an + 1));
-		AstNode*[] nv = mem::new_array(AstNode*, (sz)(an + 1));
+		String[] nk = mem::talloc_array(String, (sz)(an + 1));
+		AstNode*[] nv = mem::talloc_array(AstNode*, (sz)(an + 1));
 		for (int i = 0; i < an; i++) { nk[i] = attr_keys[i]; nv[i] = attr_vals[i]; }
 		nk[an] = k;
 		nv[an] = v;
@@ -708,7 +709,7 @@ fn AstNode* parse_element(Parser* p)
 		parser_set_error(p, "expected '>' or '/>' to close element open tag");
 		return make_call(make_var(tag), { attrs });
 	}
-	// Parse children: comma-separated expressions until '</'.
+	// Parse children: whitespace or comma separated expressions until '</'.
 	AstNode*[] children = {};
 	int cn = 0;
 	while (!parser_check(p, TK_EOF))
@@ -721,12 +722,12 @@ fn AstNode* parse_element(Parser* p)
 		}
 		AstNode* child = parse_or(p);
 		if (p.error) return make_call(make_var(tag), { attrs });
-		AstNode*[] nc = mem::new_array(AstNode*, (sz)(cn + 1));
+		AstNode*[] nc = mem::talloc_array(AstNode*, (sz)(cn + 1));
 		for (int i = 0; i < cn; i++) nc[i] = children[i];
 		nc[cn] = child;
 		children = nc;
 		cn++;
-		if (!parser_accept(p, TK_COMMA)) break;
+		parser_accept(p, TK_COMMA); // optional comma separator
 	}
 	// Consume '</tag>'
 	if (!parser_check(p, TK_LT))
@@ -750,11 +751,12 @@ fn AstNode* parse_element(Parser* p)
 	{
 		parser_set_error(p, "expected '>' to close closing tag");
 	}
-	// Build the call: tag(attrs, child1, child2, ...).
-	AstNode*[] args = mem::new_array(AstNode*, (sz)(cn + 1));
-	args[0] = attrs;
-	for (int i = 0; i < cn; i++) args[i + 1] = children[i];
-	return make_call(make_var(tag), args);
+	// Build the call: tag(attrs, [child1, child2, ...]).
+	if (cn == 0)
+	{
+		return make_call(make_var(tag), { attrs });
+	}
+	return make_call(make_var(tag), { attrs, make_array(children) });
 }
 
 fn AstNode* parse_postfix(Parser* p)
@@ -805,7 +807,7 @@ fn AstNode* parse_postfix(Parser* p)
 				{
 					AstNode* a = parse_or(p);
 					if (p.error) return e;
-					AstNode*[] na = mem::new_array(AstNode*, (sz)(n + 1));
+					AstNode*[] na = mem::talloc_array(AstNode*, (sz)(n + 1));
 					for (int i = 0; i < n; i++) na[i] = args[i];
 					na[n] = a;
 					args = na;
@@ -843,7 +845,7 @@ fn AstNode* parse_postfix(Parser* p)
 				parser_advance(p);
 				AstNode* end = parse_or(p);
 				if (p.error) return e;
-				AstNode*[] args = mem::new_array(AstNode*, 3);
+				AstNode*[] args = mem::talloc_array(AstNode*, 3);
 				args[0] = e;
 				args[1] = make_lit(mk_num(0.0));
 				args[2] = end;
@@ -860,7 +862,7 @@ fn AstNode* parse_postfix(Parser* p)
 					if (parser_check(p, TK_RBRACK))
 					{
 						// xs[i..]  — slice to end.
-						args = mem::new_array(AstNode*, 3);
+						args = mem::talloc_array(AstNode*, 3);
 						args[0] = e;
 						args[1] = start;
 						args[2] = make_lit(mk_num(-1.0));
@@ -869,7 +871,7 @@ fn AstNode* parse_postfix(Parser* p)
 					{
 						AstNode* end = parse_or(p);
 						if (p.error) return e;
-						args = mem::new_array(AstNode*, 3);
+						args = mem::talloc_array(AstNode*, 3);
 						args[0] = e;
 						args[1] = start;
 						args[2] = end;
@@ -919,8 +921,8 @@ fn AstNode* parse_record_lit(Parser* p)
 			}
 			AstNode* v = parse_or(p);
 			if (p.error) return make_record({}, {});
-			String[] nk = mem::new_array(String, (sz)(n + 1));
-			AstNode*[] nv = mem::new_array(AstNode*, (sz)(n + 1));
+			String[] nk = mem::talloc_array(String, (sz)(n + 1));
+			AstNode*[] nv = mem::talloc_array(AstNode*, (sz)(n + 1));
 			for (int i = 0; i < n; i++) { nk[i] = keys[i]; nv[i] = vals[i]; }
 			nk[n] = k;
 			nv[n] = v;
@@ -954,7 +956,7 @@ fn AstNode* parse_array_lit(Parser* p)
 		{
 			AstNode* e = parse_or(p);
 			if (p.error) return make_array({});
-			AstNode*[] ni = mem::new_array(AstNode*, (sz)(n + 1));
+			AstNode*[] ni = mem::talloc_array(AstNode*, (sz)(n + 1));
 			for (int i = 0; i < n; i++) ni[i] = items[i];
 			ni[n] = e;
 			items = ni;
@@ -1042,8 +1044,8 @@ fn AstNode* parse_primary(Parser* p)
 						pt = parse_type(p);
 						if (pt == null) return make_lit(mk_nil());
 					}
-					String[] npn = mem::new_array(String, (sz)(pn + 1));
-					Type*[] npt = mem::new_array(Type*, (sz)(pn + 1));
+					String[] npn = mem::talloc_array(String, (sz)(pn + 1));
+					Type*[] npt = mem::talloc_array(Type*, (sz)(pn + 1));
 					for (int i = 0; i < pn; i++) { npn[i] = pnames[i]; npt[i] = ptypes[i]; }
 					npn[pn] = name;
 					npt[pn] = pt;
@@ -1175,9 +1177,9 @@ fn AstNode* parse_primary(Parser* p)
 				}
 				AstNode* body_arm = parse_or(p);
 				if (p.error) return scrut;
-				String[] nt = mem::new_array(String, (sz)(an + 1));
-				String[] nb = mem::new_array(String, (sz)(an + 1));
-				AstNode*[] nc = mem::new_array(AstNode*, (sz)(an + 1));
+				String[] nt = mem::talloc_array(String, (sz)(an + 1));
+				String[] nb = mem::talloc_array(String, (sz)(an + 1));
+				AstNode*[] nc = mem::talloc_array(AstNode*, (sz)(an + 1));
 				for (int i = 0; i < an; i++) { nt[i] = tags[i]; nb[i] = binds[i]; nc[i] = bodies[i]; }
 				nt[an] = tag;
 				nb[an] = bind;
@@ -1249,7 +1251,7 @@ fn AstNode* parse_program(Parser* p)
 	{
 		AstNode* item = parse_toplevel(p);
 		if (p.error) return make_lit(mk_nil());
-		AstNode*[] ni = mem::new_array(AstNode*, (sz)(n + 1));
+		AstNode*[] ni = mem::talloc_array(AstNode*, (sz)(n + 1));
 		for (int i = 0; i < n; i++) ni[i] = items[i];
 		ni[n] = item;
 		items = ni;
@@ -1274,7 +1276,7 @@ fn AstNode* parse_program(Parser* p)
 		{
 			// Bare expression at non-final position: just sequence it via SEQ
 			// and the desugarer's discard-binding keeps the env intact.
-			AstNode*[] seq_items = mem::new_array(AstNode*, 2);
+			AstNode*[] seq_items = mem::talloc_array(AstNode*, 2);
 			seq_items[0] = item;
 			seq_items[1] = body;
 			body = make_seq(seq_items);

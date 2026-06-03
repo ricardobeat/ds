@@ -527,7 +527,7 @@ fn FormatResult format_source(String src)
 		res.message = pr.message;
 		return res;
 	}
-	DString buf; buf.init(mem);
+	DString buf; buf.tinit();
 	fmt_let_chain(&buf, pr.root, 0);
 	res.output = buf.str_view();
 	return res;

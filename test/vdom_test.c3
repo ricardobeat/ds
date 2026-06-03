@@ -8,8 +8,7 @@ import std::io;
 fn void test_vdom_renders() @test
 {
 	String src =
-`let wrap = fn(x) { if is_array(x) then x else [x] };
-let h = fn(attrs, kids) { { name: attrs.name, attrs: attrs, kids: wrap(kids) } };
+`let h = fn(attrs, kids) { { name: attrs.name, attrs: attrs, kids: kids } };
 let join = fn(rend, xs) {
   if len(xs) === 0 then ""
   else rend(xs[0]) + join(rend, xs[1..])
@@ -19,8 +18,8 @@ let render = fn(v) {
   else "<" + v.name + ">" + join(render, v.kids) + "</" + v.name + ">"
 };
 let page = <h name="div" class="container">
-  [<h name="h1">[<h name="text">"Hello, vdom!"</h>]</h>,
-   <h name="p">[<h name="text">"A paragraph."</h>]</h>]
+  <h name="h1"><h name="text">"Hello, vdom!"</h></h>,
+  <h name="p"><h name="text">"A paragraph."</h></h>
 </h>;
 render(page)`;
 	Value v = run_parsed(src);

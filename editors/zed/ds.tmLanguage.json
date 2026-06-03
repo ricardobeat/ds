@@ -1,0 +1,132 @@
+{
+	"$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+	"name": "DS",
+	"scopeName": "source.ds",
+	"fileTypes": ["ds"],
+	"patterns": [
+		{ "include": "#comments" },
+		{ "include": "#strings" },
+		{ "include": "#numbers" },
+		{ "include": "#keywords" },
+		{ "include": "#builtins" },
+		{ "include": "#jsx" },
+		{ "include": "#operators" },
+		{ "include": "#punctuation" }
+	],
+	"repository": {
+		"comments": {
+			"patterns": [
+				{ "begin": "/\\*", "end": "\\*/", "name": "comment.block.ds" },
+				{ "begin": "//", "end": "$", "name": "comment.line.double-slash.ds" }
+			]
+		},
+		"strings": {
+			"patterns": [
+				{
+					"begin": "\"",
+					"end": "\"",
+					"name": "string.quoted.double.ds",
+					"patterns": [
+						{ "match": "\\\\[\"\\\\nrt0]", "name": "constant.character.escape.ds" }
+					]
+				},
+				{
+					"begin": "`",
+					"end": "`",
+					"name": "string.quoted.raw.ds"
+				}
+			]
+		},
+		"numbers": {
+			"patterns": [
+				{ "match": "\\b[0-9]+\\.[0-9]+\\b", "name": "constant.numeric.float.ds" },
+				{ "match": "\\b[0-9]+\\b", "name": "constant.numeric.integer.ds" }
+			]
+		},
+		"keywords": {
+			"patterns": [
+				{ "match": "\\blet\\b", "name": "keyword.declaration.let.ds" },
+				{ "match": "\\bfn\\b", "name": "keyword.declaration.fn.ds" },
+				{ "match": "\\bif\\b", "name": "keyword.control.if.ds" },
+				{ "match": "\\bthen\\b", "name": "keyword.control.then.ds" },
+				{ "match": "\\belse\\b", "name": "keyword.control.else.ds" },
+				{ "match": "\\bthrow\\b", "name": "keyword.control.throw.ds" },
+				{ "match": "\\btry\\b", "name": "keyword.control.try.ds" },
+				{ "match": "\\bcatch\\b", "name": "keyword.control.catch.ds" },
+				{ "match": "\\bmatch\\b", "name": "keyword.control.match.ds" },
+				{ "match": "\\btype\\b", "name": "keyword.declaration.type.ds" },
+				{ "match": "\\btrue\\b", "name": "constant.language.boolean.ds" },
+				{ "match": "\\bfalse\\b", "name": "constant.language.boolean.ds" },
+				{ "match": "\\bnil\\b", "name": "constant.language.nil.ds" }
+			]
+		},
+		"builtins": {
+			"patterns": [
+				{ "match": "\\blen\\b", "name": "support.function.builtin.ds" },
+				{ "match": "\\bprint\\b", "name": "support.function.builtin.ds" },
+				{ "match": "\\bis_array\\b", "name": "support.function.builtin.ds" },
+				{ "match": "\\bis_record\\b", "name": "support.function.builtin.ds" },
+				{ "match": "\\bis_number\\b", "name": "support.function.builtin.ds" },
+				{ "match": "\\bis_string\\b", "name": "support.function.builtin.ds" },
+				{ "match": "\\bis_bool\\b", "name": "support.function.builtin.ds" },
+				{ "match": "\\bis_nil\\b", "name": "support.function.builtin.ds" }
+			]
+		},
+		"jsx": {
+			"patterns": [
+				{
+					"begin": "(</?)([_a-zA-Z][_a-zA-Z0-9]*)",
+					"end": "(/?>)",
+					"name": "meta.tag.ds",
+					"beginCaptures": {
+						"1": { "name": "punctuation.definition.tag.begin.ds" },
+						"2": { "name": "entity.name.tag.ds" }
+					},
+					"endCaptures": {
+						"1": { "name": "punctuation.definition.tag.end.ds" }
+					},
+					"patterns": [
+						{
+							"match": "([_a-zA-Z][_a-zA-Z0-9]*)\\s*(=)\\s*(\"([^\"]*)\"|[0-9_.]+|\\{[^}]*\\}|true|false|nil)",
+							"captures": {
+								"1": { "name": "entity.other.attribute-name.ds" },
+								"2": { "name": "punctuation.separator.key-value.ds" },
+								"3": { "name": "string.quoted.double.ds" }
+							}
+						}
+					]
+				}
+			]
+		},
+		"operators": {
+			"patterns": [
+				{ "match": "===", "name": "keyword.operator.strict-eq.ds" },
+				{ "match": "!==", "name": "keyword.operator.strict-neq.ds" },
+				{ "match": "<=", "name": "keyword.operator.less-eq.ds" },
+				{ "match": ">=", "name": "keyword.operator.greater-eq.ds" },
+				{ "match": "->", "name": "keyword.operator.arrow.ds" },
+				{ "match": "\\.\\.", "name": "keyword.operator.range.ds" },
+				{ "match": "=", "name": "keyword.operator.assignment.ds" },
+				{ "match": "<", "name": "keyword.operator.comparison.ds" },
+				{ "match": ">", "name": "keyword.operator.comparison.ds" },
+				{ "match": "\\+", "name": "keyword.operator.arithmetic.ds" },
+				{ "match": "-", "name": "keyword.operator.arithmetic.ds" },
+				{ "match": "\\*", "name": "keyword.operator.arithmetic.ds" },
+				{ "match": "/", "name": "keyword.operator.arithmetic.ds" }
+			]
+		},
+		"punctuation": {
+			"patterns": [
+				{ "match": "\\.", "name": "punctuation.separator.dot.ds" },
+				{ "match": ",", "name": "punctuation.separator.comma.ds" },
+				{ "match": ";", "name": "punctuation.terminator.ds" },
+				{ "match": "\\{", "name": "punctuation.definition.brace.curly.begin.ds" },
+				{ "match": "\\}", "name": "punctuation.definition.brace.curly.end.ds" },
+				{ "match": "\\[", "name": "punctuation.definition.bracket.square.begin.ds" },
+				{ "match": "\\]", "name": "punctuation.definition.bracket.square.end.ds" },
+				{ "match": "\\(", "name": "punctuation.definition.bracket.round.begin.ds" },
+				{ "match": "\\)", "name": "punctuation.definition.bracket.round.end.ds" }
+			]
+		}
+	}
+}

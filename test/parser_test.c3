@@ -15,30 +15,22 @@ import std::io;
 
 fn Value run_parsed(String src)
 {
-	if (builtin_env == null) builtin_env = make_builtin_env();
-	@pool() {
-		ParseResult pr = parse_source(src);
-		if (pr.error)
-		{
-			io::printfn("parse failed: %s", pr.message);
-			return mk_nil();
-		}
-		AstNode* kernel = desugar(pr.root, null);
-		EvalResult r = eval(kernel, builtin_env);
-		if (r.thrown)
-		{
-			Value s = show(r.value);
-			io::printfn("threw: %s", s.str_val);
-			return mk_nil();
-		}
-		// Copy string results to the heap so they survive the @pool.
-		if (r.value.type == STRING)
-		{
-			String dup = string::format(mem, "%s", r.value.str_val);
-			r.value.str_val = dup;
-		}
-		return r.value;
-	};
+	Env* env = make_builtin_env();
+	ParseResult pr = parse_source(src);
+	if (pr.error)
+	{
+		io::printfn("parse failed: %s", pr.message);
+		return mk_nil();
+	}
+	AstNode* kernel = desugar(pr.root, null);
+	EvalResult r = eval(kernel, env);
+	if (r.thrown)
+	{
+		Value s = show(r.value);
+		io::printfn("threw: %s", s.str_val);
+		return mk_nil();
+	}
+	return r.value;
 }
 
 fn void test_parser_number() @test
@@ -189,8 +181,10 @@ fn void test_parser_comments() @test
 
 fn void test_parser_error_reports() @test
 {
-	ParseResult pr = parse_source("let = 5");
-	assert(pr.error);
+	@pool() {
+		ParseResult pr = parse_source("let = 5");
+		assert(pr.error);
+	};
 }
 
 fn void test_parser_unary_neg() @test

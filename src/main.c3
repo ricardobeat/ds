@@ -42,7 +42,7 @@ fn Type mk_tname(String n) {
 fn Type mk_tarray(Type e) {
 	Type t;
 	t.kind = TARRAY;
-	Type* p = mem::new(Type);
+	Type* p = mem::tnew(Type);
 	*p = e;
 	t.elem = p;
 	return t;
@@ -59,9 +59,9 @@ fn Type mk_trecord_ptr(String[] ks, Type*[] ts) {
 
 fn Type mk_trecord(String[] ks, Type[] ts) {
 	assert(ks.len == ts.len);
-	Type*[] ps = mem::new_array(Type*, ts.len);
+	Type*[] ps = mem::talloc_array(Type*, ts.len);
 	for (int i = 0; i < ts.len; i++) {
-		ps[i] = mem::new(Type);
+		ps[i] = mem::tnew(Type);
 		*ps[i] = ts[i];
 	}
 	return mk_trecord_ptr(ks, ps);
@@ -72,9 +72,9 @@ fn Type mk_tsum(String[] tags, Type[] ts) {
 	Type t;
 	t.kind = TSUM;
 	t.keys = tags;
-	Type*[] ps = mem::new_array(Type*, ts.len);
+	Type*[] ps = mem::talloc_array(Type*, ts.len);
 	for (int i = 0; i < ts.len; i++) {
-		ps[i] = mem::new(Type);
+		ps[i] = mem::tnew(Type);
 		*ps[i] = ts[i];
 	}
 	t.types = ps;
@@ -90,7 +90,7 @@ fn TypeDefEntry* tenv_lookup(TypeDefEntry* tenv, String name) {
 }
 
 fn TypeDefEntry* tenv_extend(TypeDefEntry* tenv, String name, Type type) {
-	TypeDefEntry* e = mem::new(TypeDefEntry);
+	TypeDefEntry* e = mem::tnew(TypeDefEntry);
 	e.name = name;
 	e.type = type;
 	e.next = tenv;
@@ -235,24 +235,24 @@ fn Value mk_num(double n) => { .type = NUMBER, .num_val = n };
 fn Value mk_str(String s) => { .type = STRING, .str_val = s };
 fn Value mk_prim(String n) => { .type = PRIMITIVE, .str_val = n };
 
-fn Array* new_array() => mem::new(Array);
-fn Record* new_record() => mem::new(Record);
-fn Closure* new_closure() => mem::new(Closure);
+fn Array* new_array() => mem::tnew(Array);
+fn Record* new_record() => mem::tnew(Record);
+fn Closure* new_closure() => mem::tnew(Closure);
 fn Prim* new_prim(String n) {
-	Prim* p = mem::new(Prim);
+	Prim* p = mem::tnew(Prim);
 	p.name = n;
 	return p;
 }
 
 fn AstNode* make_lit(Value v) {
-	AstNode* n = mem::new(AstNode);
+	AstNode* n = mem::tnew(AstNode);
 	n.type = LIT;
 	n.literal = v;
 	return n;
 }
 
 fn AstNode* make_var(String name) {
-	AstNode* n = mem::new(AstNode);
+	AstNode* n = mem::tnew(AstNode);
 	n.type = VAR;
 	n.name = name;
 	return n;
@@ -261,31 +261,31 @@ fn AstNode* make_var(String name) {
 fn AstNode* make_lambda(String[] params, AstNode* body) {
 	// Copy `params` to heap — the caller's slice literal `{ "x", "y" }` is a
 	// stack temp and would dangle once we return.
-	AstNode* n = mem::new(AstNode);
+	AstNode* n = mem::tnew(AstNode);
 	n.type = LAMBDA;
-	String[] heap_params = mem::new_array(String, params.len);
+	String[] heap_params = mem::talloc_array(String, params.len);
 	for (int i = 0; i < params.len; i++) heap_params[i] = params[i];
 	n.names = heap_params;
-	AstNode*[] kids = mem::new_array(AstNode*, 1);
+	AstNode*[] kids = mem::talloc_array(AstNode*, 1);
 	kids[0] = body;
 	n.children = kids;
 	return n;
 }
 
 fn AstNode* make_call(AstNode* fn_node, AstNode*[] args) {
-	AstNode*[] kids = mem::new_array(AstNode*, args.len + 1);
+	AstNode*[] kids = mem::talloc_array(AstNode*, args.len + 1);
 	kids[0] = fn_node;
 	for (int i = 0; i < args.len; i++) kids[i + 1] = args[i];
-	AstNode* n = mem::new(AstNode);
+	AstNode* n = mem::tnew(AstNode);
 	n.type = CALL;
 	n.children = kids;
 	return n;
 }
 
 fn AstNode* make_if(AstNode* c, AstNode* t, AstNode* e) {
-	AstNode* n = mem::new(AstNode);
+	AstNode* n = mem::tnew(AstNode);
 	n.type = IF;
-	AstNode*[] kids = mem::new_array(AstNode*, 3);
+	AstNode*[] kids = mem::talloc_array(AstNode*, 3);
 	kids[0] = c;
 	kids[1] = t;
 	kids[2] = e;
@@ -296,9 +296,9 @@ fn AstNode* make_if(AstNode* c, AstNode* t, AstNode* e) {
 fn AstNode* make_record(String[] keys, AstNode*[] vals) {
 	assert(keys.len == vals.len);
 	// Same heap-copy rationale as make_lambda: `keys` is usually a stack temp.
-	AstNode* n = mem::new(AstNode);
+	AstNode* n = mem::tnew(AstNode);
 	n.type = RECORD;
-	String[] heap_keys = mem::new_array(String, keys.len);
+	String[] heap_keys = mem::talloc_array(String, keys.len);
 	for (int i = 0; i < keys.len; i++) heap_keys[i] = keys[i];
 	n.names = heap_keys;
 	n.children = vals;
@@ -306,16 +306,16 @@ fn AstNode* make_record(String[] keys, AstNode*[] vals) {
 }
 
 fn AstNode* make_array(AstNode*[] items) {
-	AstNode* n = mem::new(AstNode);
+	AstNode* n = mem::tnew(AstNode);
 	n.type = ARRAY_LIT;
 	n.children = items;
 	return n;
 }
 
 fn AstNode* make_get(AstNode* obj, AstNode* key) {
-	AstNode* n = mem::new(AstNode);
+	AstNode* n = mem::tnew(AstNode);
 	n.type = GET;
-	AstNode*[] kids = mem::new_array(AstNode*, 2);
+	AstNode*[] kids = mem::talloc_array(AstNode*, 2);
 	kids[0] = obj;
 	kids[1] = key;
 	n.children = kids;
@@ -323,9 +323,9 @@ fn AstNode* make_get(AstNode* obj, AstNode* key) {
 }
 
 fn AstNode* make_set(AstNode* obj, AstNode* key, AstNode* val) {
-	AstNode* n = mem::new(AstNode);
+	AstNode* n = mem::tnew(AstNode);
 	n.type = SET;
-	AstNode*[] kids = mem::new_array(AstNode*, 3);
+	AstNode*[] kids = mem::talloc_array(AstNode*, 3);
 	kids[0] = obj;
 	kids[1] = key;
 	kids[2] = val;
@@ -334,19 +334,19 @@ fn AstNode* make_set(AstNode* obj, AstNode* key, AstNode* val) {
 }
 
 fn AstNode* make_throw(AstNode* v) {
-	AstNode* n = mem::new(AstNode);
+	AstNode* n = mem::tnew(AstNode);
 	n.type = THROW;
-	AstNode*[] kids = mem::new_array(AstNode*, 1);
+	AstNode*[] kids = mem::talloc_array(AstNode*, 1);
 	kids[0] = v;
 	n.children = kids;
 	return n;
 }
 
 fn AstNode* make_try(AstNode* body, String cname, AstNode* handler) {
-	AstNode* n = mem::new(AstNode);
+	AstNode* n = mem::tnew(AstNode);
 	n.type = TRY;
 	n.name = cname;
-	AstNode*[] kids = mem::new_array(AstNode*, 2);
+	AstNode*[] kids = mem::talloc_array(AstNode*, 2);
 	kids[0] = body;
 	kids[1] = handler;
 	n.children = kids;
@@ -354,17 +354,17 @@ fn AstNode* make_try(AstNode* body, String cname, AstNode* handler) {
 }
 
 fn AstNode* make_prim_node(String name) {
-	AstNode* n = mem::new(AstNode);
+	AstNode* n = mem::tnew(AstNode);
 	n.type = PRIM;
 	n.name = name;
 	return n;
 }
 
 fn AstNode* make_letrec(String name, AstNode* init, AstNode* body) {
-	AstNode* n = mem::new(AstNode);
+	AstNode* n = mem::tnew(AstNode);
 	n.type = LETREC;
 	n.name = name;
-	AstNode*[] kids = mem::new_array(AstNode*, 2);
+	AstNode*[] kids = mem::talloc_array(AstNode*, 2);
 	kids[0] = init;
 	kids[1] = body;
 	n.children = kids;
@@ -372,17 +372,17 @@ fn AstNode* make_letrec(String name, AstNode* init, AstNode* body) {
 }
 
 fn AstNode* make_seq(AstNode*[] exprs) {
-	AstNode* n = mem::new(AstNode);
+	AstNode* n = mem::tnew(AstNode);
 	n.type = SEQ;
 	n.children = exprs;
 	return n;
 }
 
 fn AstNode* make_binop_node(String op, AstNode* lhs, AstNode* rhs) {
-	AstNode* n = mem::new(AstNode);
+	AstNode* n = mem::tnew(AstNode);
 	n.type = BINOP;
 	n.name = op;
-	AstNode*[] kids = mem::new_array(AstNode*, 2);
+	AstNode*[] kids = mem::talloc_array(AstNode*, 2);
 	kids[0] = lhs;
 	kids[1] = rhs;
 	n.children = kids;
@@ -390,10 +390,10 @@ fn AstNode* make_binop_node(String op, AstNode* lhs, AstNode* rhs) {
 }
 
 fn AstNode* make_methodcall(AstNode* recv, String name, AstNode*[] args) {
-	AstNode* n = mem::new(AstNode);
+	AstNode* n = mem::tnew(AstNode);
 	n.type = METHODCALL;
 	n.name = name;
-	AstNode*[] kids = mem::new_array(AstNode*, args.len + 1);
+	AstNode*[] kids = mem::talloc_array(AstNode*, args.len + 1);
 	kids[0] = recv;
 	for (int i = 0; i < args.len; i++) kids[i + 1] = args[i];
 	n.children = kids;
@@ -415,25 +415,25 @@ fn bool truthy(Value v) {
 // ---------------------------------------------------------------------------
 
 fn AstNode* make_typed_lambda(String[] names, Type*[] param_types, Type* ret_type, AstNode* body) {
-	AstNode* n = mem::new(AstNode);
+	AstNode* n = mem::tnew(AstNode);
 	n.type = LAMBDA_T;
-	String[] heap_names = mem::new_array(String, names.len);
+	String[] heap_names = mem::talloc_array(String, names.len);
 	for (int i = 0; i < names.len; i++) heap_names[i] = names[i];
 	n.names = heap_names;
 	n.param_types = param_types;
 	n.ret_type = ret_type;
-	AstNode*[] kids = mem::new_array(AstNode*, 1);
+	AstNode*[] kids = mem::talloc_array(AstNode*, 1);
 	kids[0] = body;
 	n.children = kids;
 	return n;
 }
 
 fn AstNode* make_typed_let(String name, Type* ann_type, AstNode* init, AstNode* body) {
-	AstNode* n = mem::new(AstNode);
+	AstNode* n = mem::tnew(AstNode);
 	n.type = LET_T;
 	n.name = name;
 	n.ann_type = ann_type;
-	AstNode*[] kids = mem::new_array(AstNode*, 2);
+	AstNode*[] kids = mem::talloc_array(AstNode*, 2);
 	kids[0] = init;
 	kids[1] = body;
 	n.children = kids;
@@ -441,21 +441,21 @@ fn AstNode* make_typed_let(String name, Type* ann_type, AstNode* init, AstNode* 
 }
 
 fn AstNode* make_typedef(String name, Type* t, AstNode* body) {
-	AstNode* n = mem::new(AstNode);
+	AstNode* n = mem::tnew(AstNode);
 	n.type = TYPEDEF;
 	n.name = name;
 	n.ret_type = t;
-	AstNode*[] kids = mem::new_array(AstNode*, 1);
+	AstNode*[] kids = mem::talloc_array(AstNode*, 1);
 	kids[0] = body;
 	n.children = kids;
 	return n;
 }
 
 fn AstNode* make_construct(String tag, AstNode* val) {
-	AstNode* n = mem::new(AstNode);
+	AstNode* n = mem::tnew(AstNode);
 	n.type = CONSTRUCT;
 	n.name = tag;
-	AstNode*[] kids = mem::new_array(AstNode*, 1);
+	AstNode*[] kids = mem::talloc_array(AstNode*, 1);
 	kids[0] = val;
 	n.children = kids;
 	return n;
@@ -464,10 +464,10 @@ fn AstNode* make_construct(String tag, AstNode* val) {
 fn AstNode* make_match(AstNode* scrut, String[] tags, String[] binds, AstNode*[] bodies) {
 	assert(tags.len == binds.len);
 	assert(tags.len == bodies.len);
-	AstNode* n = mem::new(AstNode);
+	AstNode* n = mem::tnew(AstNode);
 	n.type = MATCH;
-	String[] nm = mem::new_array(String, 2 * tags.len);
-	AstNode*[] kids = mem::new_array(AstNode*, bodies.len + 1);
+	String[] nm = mem::talloc_array(String, 2 * tags.len);
+	AstNode*[] kids = mem::talloc_array(AstNode*, bodies.len + 1);
 	kids[0] = scrut;
 	for (int i = 0; i < tags.len; i++) {
 		nm[2 * i] = tags[i];
@@ -551,10 +551,10 @@ fn Value show(Value v) {
 // ============================================================================
 
 fn Env* env_extend(Env* parent, String[] names, Value[] values) {
-	Env* e = mem::new(Env);
+	Env* e = mem::tnew(Env);
 	e.parent = parent;
-	e.map = mem::new(HashMap{String, Value});
-	e.map.init(mem);
+	e.map = mem::tnew(HashMap{String, Value});
+	e.map.tinit();
 	for (int i = 0; i < names.len; i++) {
 		e.map.set(names[i], values[i]);
 	}
@@ -562,10 +562,10 @@ fn Env* env_extend(Env* parent, String[] names, Value[] values) {
 }
 
 fn Env* env_define(Env* parent, String name, Value v) {
-	Env* e = mem::new(Env);
+	Env* e = mem::tnew(Env);
 	e.parent = parent;
-	e.map = mem::new(HashMap{String, Value});
-	e.map.init(mem);
+	e.map = mem::tnew(HashMap{String, Value});
+	e.map.tinit();
 	e.map.set(name, v);
 	return e;
 }
@@ -688,7 +688,7 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 				return { .thrown = true, .value = mk_str("type error: push expects array") };
 			}
 			Array* a = (Array*)args[0].ptr_val;
-			Value[] grown = mem::new_array(Value, a.items.len + 1);
+			Value[] grown = mem::talloc_array(Value, a.items.len + 1);
 			for (int i = 0; i < a.items.len; i++) grown[i] = a.items[i];
 			grown[a.items.len] = args[1];
 			a.items = grown;
@@ -729,7 +729,7 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 			if (end   < start)     end   = start;
 			if (end   > len)       end   = len;
 			long n = end - start;
-			Value[] out = mem::new_array(Value, (sz)n);
+			Value[] out = mem::talloc_array(Value, (sz)n);
 			for (long i = 0; i < n; i++) out[i] = a.items[start + i];
 			Array* r = new_array();
 			r.items = out;
@@ -763,16 +763,16 @@ fn AstNode* desugar_seq_kids(AstNode*[] exprs) {
 	if (exprs.len == 0) return make_lit(mk_nil());
 	if (exprs.len == 1) return desugar(exprs[0], null);
 	AstNode* head   = desugar(exprs[0], null);
-	AstNode*[] rest = mem::new_array(AstNode*, exprs.len - 1);
+	AstNode*[] rest = mem::talloc_array(AstNode*, exprs.len - 1);
 	for (int i = 1; i < exprs.len; i++) rest[i - 1] = exprs[i];
 	return make_call(make_lambda({ "_" }, desugar_seq_kids(rest)), { head });
 }
 
 // Desugar every child of an already-kernel node, then rebuild it.
 fn AstNode* desugar_with_kids(NodeType t, AstNode*[] kids, TypeDefEntry* tenv) {
-	AstNode*[] out = mem::new_array(AstNode*, kids.len);
+	AstNode*[] out = mem::talloc_array(AstNode*, kids.len);
 	for (int i = 0; i < kids.len; i++) out[i] = desugar(kids[i], tenv);
-	AstNode* n = mem::new(AstNode);
+	AstNode* n = mem::tnew(AstNode);
 	n.type = t;
 	n.children = out;
 	return n;
@@ -908,10 +908,10 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 
 			{
 				// A lambda's body might be a SEQ or other surface form; desugar it.
-				AstNode* n = mem::new(AstNode);
+				AstNode* n = mem::tnew(AstNode);
 				n.type = LAMBDA;
 				n.names = e.names;
-				AstNode*[] kids = mem::new_array(AstNode*, e.children.len);
+				AstNode*[] kids = mem::talloc_array(AstNode*, e.children.len);
 				for (int i = 0; i < e.children.len; i++) kids[i] = desugar(e.children[i], tenv);
 				n.children = kids;
 				return n;
@@ -924,10 +924,10 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 
 			{
 				// Record has parallel `names` and `children`; desugar children only.
-				AstNode* n = mem::new(AstNode);
+				AstNode* n = mem::tnew(AstNode);
 				n.type = RECORD;
 				n.names = e.names;
-				AstNode*[] out = mem::new_array(AstNode*, e.children.len);
+				AstNode*[] out = mem::talloc_array(AstNode*, e.children.len);
 				for (int i = 0; i < e.children.len; i++) out[i] = desugar(e.children[i], tenv);
 				n.children = out;
 				return n;
@@ -937,10 +937,10 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 		case TRY:
 
 			{
-				AstNode* n = mem::new(AstNode);
+				AstNode* n = mem::tnew(AstNode);
 				n.type = TRY;
 				n.name = e.name;
-				AstNode*[] out = mem::new_array(AstNode*, e.children.len);
+				AstNode*[] out = mem::talloc_array(AstNode*, e.children.len);
 				for (int i = 0; i < e.children.len; i++) out[i] = desugar(e.children[i], tenv);
 				n.children = out;
 				return n;
@@ -948,10 +948,10 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 		case LETREC:
 
 			{
-				AstNode* n = mem::new(AstNode);
+				AstNode* n = mem::tnew(AstNode);
 				n.type = LETREC;
 				n.name = e.name;
-				AstNode*[] out = mem::new_array(AstNode*, e.children.len);
+				AstNode*[] out = mem::talloc_array(AstNode*, e.children.len);
 				for (int i = 0; i < e.children.len; i++) out[i] = desugar(e.children[i], tenv);
 				n.children = out;
 				return n;
@@ -972,9 +972,9 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 				// recv.m(args)  =>  Call(Lambda([r], Call(Get(Var r, m), [Var r, ...args])), [recv])
 				String m        = e.name;
 				AstNode* recv   = desugar(e.children[0], tenv);
-				AstNode*[] args = mem::new_array(AstNode*, e.children.len - 1);
+				AstNode*[] args = mem::talloc_array(AstNode*, e.children.len - 1);
 				for (int i = 1; i < e.children.len; i++) args[i - 1] = desugar(e.children[i], tenv);
-				AstNode*[] call_args = mem::new_array(AstNode*, args.len + 1);
+				AstNode*[] call_args = mem::talloc_array(AstNode*, args.len + 1);
 				call_args[0] = make_var("r");
 				for (int i = 0; i < args.len; i++) call_args[i + 1] = args[i];
 				AstNode* get  = make_get(make_var("r"), make_lit(mk_str(m)));
@@ -989,7 +989,7 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 				//   Lambda(xs:[name,Type?], ret:Type?, body)
 				//   => Lambda(xs, Check(ret, Bind(_r, body)))
 				AstNode* body_d     = desugar(e.children[0], tenv);
-				String[] heap_names = mem::new_array(String, e.names.len);
+				String[] heap_names = mem::talloc_array(String, e.names.len);
 				for (int i = 0; i < e.names.len; i++) heap_names[i] = e.names[i];
 				// Param checks
 				AstNode* checked = body_d;
@@ -1014,10 +1014,10 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 					AstNode* bind           = make_lambda({ rname }, return_checked);
 					checked = make_call(bind, { checked });
 				}
-				AstNode* n = mem::new(AstNode);
+				AstNode* n = mem::tnew(AstNode);
 				n.type = LAMBDA;
 				n.names = heap_names;
-				AstNode*[] kids = mem::new_array(AstNode*, 1);
+				AstNode*[] kids = mem::talloc_array(AstNode*, 1);
 				kids[0] = checked;
 				n.children = kids;
 				return n;
@@ -1033,10 +1033,10 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 					String where = string::tformat("let '%s'", e.name);
 					init_d = make_check(t, init_d, tenv, where);
 				}
-				AstNode* n = mem::new(AstNode);
+				AstNode* n = mem::tnew(AstNode);
 				n.type = LETREC;
 				n.name = e.name;
-				AstNode*[] kids = mem::new_array(AstNode*, 2);
+				AstNode*[] kids = mem::talloc_array(AstNode*, 2);
 				kids[0] = init_d;
 				kids[1] = body_d;
 				n.children = kids;
@@ -1055,10 +1055,10 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 			{
 				// Construct(tag, val)  =>  Record([("__tag", Lit tag), ("__val", val)])
 				AstNode* val = desugar(e.children[0], tenv);
-				String[] nk  = mem::new_array(String, 2);
+				String[] nk  = mem::talloc_array(String, 2);
 				nk[0] = "__tag";
 				nk[1] = "__val";
-				AstNode*[] vk = mem::new_array(AstNode*, 2);
+				AstNode*[] vk = mem::talloc_array(AstNode*, 2);
 				vk[0] = make_lit(mk_str(e.name));
 				vk[1] = val;
 				return make_record(nk, vk);
@@ -1160,7 +1160,7 @@ fn EvalResult eval(AstNode* node, Env* env) {
 				if (fn_r.thrown) return fn_r;
 				// Evaluate args in order, short-circuiting on throw.
 				AstNode*[] arg_nodes = node.children[1..];
-				Value[] args         = mem::new_array(Value, arg_nodes.len);
+				Value[] args         = mem::talloc_array(Value, arg_nodes.len);
 				for (int i = 0; i < arg_nodes.len; i++) {
 					EvalResult a = eval(arg_nodes[i], env);
 					if (a.thrown) return a;
@@ -1241,8 +1241,8 @@ fn EvalResult eval(AstNode* node, Env* env) {
 						}
 					}
 					// new key: append
-					String[] nk = mem::new_array(String, r.keys.len + 1);
-					Value[] nv  = mem::new_array(Value, r.values.len + 1);
+					String[] nk = mem::talloc_array(String, r.keys.len + 1);
+					Value[] nv  = mem::talloc_array(Value, r.values.len + 1);
 					for (int j = 0; j < r.keys.len; j++) {
 						nk[j] = r.keys[j];
 						nv[j] = r.values[j];
@@ -1260,7 +1260,7 @@ fn EvalResult eval(AstNode* node, Env* env) {
 			{
 				Record* r = new_record();
 				r.keys = node.names;
-				Value[] vals = mem::new_array(Value, node.children.len);
+				Value[] vals = mem::talloc_array(Value, node.children.len);
 				for (int i = 0; i < node.children.len; i++) {
 					EvalResult e = eval(node.children[i], env);
 					if (e.thrown) return e;
@@ -1276,7 +1276,7 @@ fn EvalResult eval(AstNode* node, Env* env) {
 
 			{
 				Array* a      = new_array();
-				Value[] items = mem::new_array(Value, node.children.len);
+				Value[] items = mem::talloc_array(Value, node.children.len);
 				for (int i = 0; i < node.children.len; i++) {
 					EvalResult e = eval(node.children[i], env);
 					if (e.thrown) return e;
@@ -1359,10 +1359,10 @@ fn Env* make_builtin_env()
 		"is_number", "is_string", "is_bool", "is_array", "is_record", "is_nil",
 		"has_field", "len", "push", "print", "array_all", "slice",
 	};
-	Env* e = mem::new(Env);
+	Env* e = mem::tnew(Env);
 	e.parent = null;
-	e.map = mem::new(HashMap{String, Value});
-	e.map.init(mem);
+	e.map = mem::tnew(HashMap{String, Value});
+	e.map.tinit();
 	for (int i = 0; i < names.len; i++)
 	{
 		e.map.set(names[i], mk_prim(names[i]));

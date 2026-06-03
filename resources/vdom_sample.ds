@@ -2,10 +2,8 @@
 // function is the only constructor; the tag name lives in the `name`
 // attribute so the same constructor handles every tag.
 
-let wrap = fn(x) { if is_array(x) then x else [x] }
-
 let h = fn(attrs, kids) {
-  { name: attrs.name, attrs: attrs, kids: wrap(kids) }
+  { name: attrs.name, attrs: attrs, kids: kids }
 }
 
 let join = fn(rend, xs) {
@@ -19,8 +17,12 @@ let render = fn(v) {
 }
 
 let page = <h name="div" class="container">
-  [<h name="h1">[<h name="text">"Hello, vdom!"</h>]</h>,
-   <h name="p">[<h name="text">"A paragraph built from a virtual DOM."</h>]</h>]
+  <h name="h1">
+    <h name="text">"Hello, vdom!"</h>
+  </h>
+  <h name="p">
+    <h name="text">"A paragraph built from a virtual DOM."</h>
+  </h>
 </h>
 
 render(page)

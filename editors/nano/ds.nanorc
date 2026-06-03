@@ -1,0 +1,34 @@
+## DS language syntax highlighting for GNU nano
+## Place in ~/.nanorc or add to /usr/share/nano/
+
+syntax "ds" "\.ds$"
+
+## Comments
+color brightblack   "^//.*$"
+color brightblack   "/\*" "\*/"
+
+## Strings
+color brightyellow  "\"[^"]*\""  "`[^`]*`"
+
+## Numbers
+color brightcyan    "\<[0-9]+\.[0-9]+\>"
+color brightcyan    "\<[0-9]+\>"
+
+## Keywords
+color brightgreen   "\<(let|fn|if|then|else|throw|try|catch|match|type)\>"
+
+## Literals
+color brightmagenta "\<(true|false|nil)\>"
+
+## Builtin functions
+color brightblue    "\<(len|print|is_array|is_record|is_number|is_string|is_bool|is_nil)\>"
+
+## JSX/Element tags
+color brightred     "\</?[_a-zA-Z][_a-zA-Z0-9]*"
+color brightred     "/?\>"
+
+## Operators
+color brightwhite   "(===|!==|<=|>=|->|\.\.)"
+
+## Punctuation / brackets
+color brightwhite   "[{}\[\]()]"

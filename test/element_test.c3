@@ -49,8 +49,8 @@ fn void test_element_attrs_ident() @test
 
 fn void test_element_with_children() @test
 {
-	// <wrap>a, b, c</wrap>  =>  wrap({}, a, b, c)
-	Value v = run_parsed("let wrap = fn(_attrs, a, b, c) { [a, b, c] }; <wrap>10, 20, 30</wrap>");
+	// <wrap>a, b, c</wrap>  =>  wrap({}, [a, b, c])
+	Value v = run_parsed("let wrap = fn(_attrs, kids) { kids }; <wrap>10, 20, 30</wrap>");
 	assert(v.type == ARRAY);
 }
 
@@ -73,11 +73,11 @@ fn void test_element_postfix() @test
 fn void test_element_nested() @test
 {
 	// <outer><inner /></outer>
-	//   =>  outer({}, inner({}))
-	// outer is fn(_attrs, child) { child + 1 }
+	//   =>  outer({}, [inner({})])
+	// outer is fn(_attrs, kids) { kids[0] + 1 }
 	// inner is fn(_attrs) { 41 }
-	// => outer({}, 41) = 42
-	String src = "let inner = fn(_a) { 41 }; let outer = fn(_a, child) { child + 1 }; <outer><inner /></outer>";
+	// => outer({}, [41]) = 42
+	String src = "let inner = fn(_a) { 41 }; let outer = fn(_a, kids) { kids[0] + 1 }; <outer><inner /></outer>";
 	Value v = run_parsed(src);
 	assert(v.type == NUMBER);
 	assert(v.num_val == 42.0);
@@ -112,4 +112,11 @@ fn void test_element_in_call_arg() @test
 	String src = "let m = fn(a) { a }; let id = fn(x) { x }; id(<m v=99 />)";
 	Value v = run_parsed(src);
 	assert(v.type == RECORD);
+}
+
+fn void test_element_children_whitespace_separated() @test
+{
+	// Children can be separated by whitespace (no commas needed).
+	Value v = run_parsed("let wrap = fn(_attrs, kids) { kids }; <wrap>10 20 30</wrap>");
+	assert(v.type == ARRAY);
 }
