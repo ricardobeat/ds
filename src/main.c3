@@ -1294,6 +1294,19 @@ fn EvalResult eval(AstNode* node, Env* env) {
 		case CALL:
 
 		{
+			// Fast path: primitive call — skip closure/apply_fn overhead entirely.
+			// Evaluates args into a stack buffer and dispatches directly, avoiding
+			// Prim heap allocation, args Value[] heap allocation, and env_extend.
+			if (node.children[0].type == PRIM) {
+				int argc = node.children.len - 1;
+				Value[8] stack_buf;
+				for (int i = 0; i < argc; i++) {
+					EvalResult a = eval(node.children[i + 1], env);
+					if (a.thrown) return a;
+					stack_buf[i] = a.value;
+				}
+				return prim_dispatch(node.children[0].name, stack_buf[0:argc]);
+			}
 			EvalResult fn_r = eval(node.children[0], env);
 			if (fn_r.thrown) return fn_r;
 			// Evaluate args in order, short-circuiting on throw.

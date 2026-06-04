@@ -1,6 +1,6 @@
 # Progress
 
-## Status: Build-order step 1 + step 2 — NaN-boxed Value + interned field atoms (DONE)
+## Status: Build-order step 1 + step 2 — NaN-boxed Value + interned field atoms (DONE); tree-walker prim inlining (DONE)
 
 Step 2 of the compiler plan (interned field name atoms) is now wired through
 the kernel: every distinct field name is assigned a dense `uint` atom ID by
@@ -9,10 +9,19 @@ the global `g_intern` table, and `Record.keys` is now a `uint[]` instead of a
 full string slices, which is the ~3-4× per-element speedup the plan called for.
 All 94 tests pass.
 
-The full kernel evaluator is in `src/main.c3` (~1370 LoC), the surface
+**Tree-walker primitive inlining** — the CALL handler now detects
+`Call(Prim(name), args)` at eval time and dispatches directly into
+`prim_dispatch` using a stack-allocated `Value[8]` buffer, bypassing:
+  - Prim heap allocation (`mem::tnew(Prim)` per arithmetic op)
+  - args `Value[]` heap allocation (`mem::talloc_array`)
+  - `apply_fn` → `env_extend` → HashMap creation overhead
+
+Measured improvement: fib(30) 3.68s → 2.99s (~19% faster).
+
+The full kernel evaluator is in `src/main.c3` (~1400 LoC), the surface
 parser in `src/parser.c3` (~1080 LoC), and the round-trip formatter in
-`src/formatter.c3` (~440 LoC). 81 tests pass across kernel, parser,
-element, and formatter test files.
+`src/formatter.c3` (~440 LoC). 94 tests pass across kernel, parser,
+element, formatter, and vdom test files.
 
 ### What works
 
