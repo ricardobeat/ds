@@ -1,6 +1,13 @@
 # Progress
 
-## Status: Build-order step 1 — kernel tree-walker (DONE) + parser + CLI + formatter + element syntax
+## Status: Build-order step 1 + step 2 — NaN-boxed Value + interned field atoms (DONE)
+
+Step 2 of the compiler plan (interned field name atoms) is now wired through
+the kernel: every distinct field name is assigned a dense `uint` atom ID by
+the global `g_intern` table, and `Record.keys` is now a `uint[]` instead of a
+`String[]`.  GET / SET / `has_field` / `show` all compare atom IDs instead of
+full string slices, which is the ~3-4× per-element speedup the plan called for.
+All 94 tests pass.
 
 The full kernel evaluator is in `src/main.c3` (~1370 LoC), the surface
 parser in `src/parser.c3` (~1080 LoC), and the round-trip formatter in
@@ -19,6 +26,11 @@ element, and formatter test files.
   Primitive
 - Heap-allocated Array / Record / Closure / AstNode / Env
 - HashMap-backed `Env` (O(1) name lookup per scope)
+- NaN-boxed `Value` (8 bytes, fits 4× more per cache line than the old
+  40-byte struct)
+- Interned field-name atoms (Step 2): `Record.keys` is `uint[]`, GET/SET
+  compare atom IDs.  `g_intern` is a global `HashMap{String, uint}` +
+  reverse `String[]` table, lazily initialized.
 - Primitives: `+ - * / === < > <= >= and or is_number is_string is_bool
   is_array is_record is_nil has_field len push print array_all`
 - `push` mutates an array in place (with manual realloc)
@@ -79,9 +91,24 @@ followed by `/` (the element closing tag).
   closing tag `</tag>` opens with `<`; the comparison rule would
   otherwise eat it as a `<` operator and the closing tag would be
   parsed as `/wrap` and then `>`.
+- **Type-size literal in C3 is `Type::size`, not `Type.sizeof`.** Used in
+  `alloc::realloc_array(mem, ptr, $Type, count)` for the intern table's
+  reverse-name array.
+- **Test code does not call `main()`.** The unit-test runner calls each
+  `test_*` directly, so any global state that `main()` initializes (the
+  builtin env, the new intern table) must be lazily initialized on first
+  use — see the `if (g_intern.fwd == null) intern_init();` guard.
+- **SET with a brand-new key path needs heap allocation, not temp pool.**
+  The growth slice (`mem::new_array(uint, ...)`) has to outlive the
+  eval frame's `@pool` block or the record's `keys` pointer will dangle.
+  The existing `push` primitive also grows with `talloc_array` but it
+  works because `@pool` survives through the eval test in current
+  usage; for SET's append path we went straight to `mem::new_array`
+  to be safe.
 
 ### Next (in build order)
 
+- [x] A. NaN-boxed `Value` (Step 1)
 - [x] B. Port the reference test cases to C3 unit tests
 - [x] C. Arrays + records dispatch
 - [x] D. Method-call desugaring (front-end only)
@@ -90,4 +117,9 @@ followed by `/` (the element closing tag).
 - [x] H. Surface parser + CLI
 - [x] I. Round-trip formatter
 - [x] J. JSX-like element syntax
+- [x] K. Interned field-name atoms (Step 2) — `Record.keys` is `uint[]`,
+       `g_intern` is the global name-to-atom table
 - [ ] G. Bytecode compiler + VM (upvalue closing, TAILCALL, refcounting)
+- [ ] L. Parse-time intern of every literal field name (optional
+       micro-optimization; currently the intern happens at eval time on
+       first lookup, which is still O(1) amortized)

@@ -174,6 +174,64 @@ fn ValueTag tag_of(Value v) {
 }
 
 // ============================================================================
+// INTERN TABLE
+// ============================================================================
+//
+// A process-global, persistent string pool.  Every distinct field name ever
+// looked up gets a compact, dense `uint` atom ID (1, 2, 3, ...).  The
+// `HashMap{String, uint}` is the forward direction (used at parse + eval time
+// to convert a `String` key into an atom).  The `String[]` array is the
+// reverse direction (used by `show()` and a few error messages to turn an
+// atom back into its human-readable name).
+//
+// Both backing arrays are heap-allocated (`mem::new_*`) so they survive the
+// `@pool` blocks used for parsing.  The map stores a copy of each string for
+// the same reason — the caller's slice may be a temp.
+
+struct InternTable {
+	HashMap{String, uint}* fwd;   // String -> atom ID
+	String[]               rev;   // atom ID - 1 -> name
+	uint                   count; // number of atoms allocated
+	uint                   cap;   // capacity of `rev`
+}
+
+InternTable g_intern;
+
+fn void intern_init() {
+	g_intern.fwd = mem::new(HashMap{String, uint});
+	g_intern.fwd.init(mem, 64);
+	g_intern.count = 0;
+	g_intern.cap = 32;
+	g_intern.rev = mem::new_array(String, g_intern.cap);
+}
+
+// Look up (or allocate) an atom ID for `s`.  The string is copied into
+// heap-owned storage so callers can pass temp-pool slices.  Lazily
+// initializes the table on first use so test code (which doesn't go
+// through `main`) gets a valid intern table for free.
+fn uint intern(String s) {
+	if (g_intern.fwd == null) intern_init();
+	if (try id = g_intern.fwd.get(s)) return id;
+	if (g_intern.count >= g_intern.cap) {
+		uint new_cap = g_intern.cap * 2;
+		g_intern.rev = alloc::realloc_array(mem, g_intern.rev, String, new_cap);
+		g_intern.cap = new_cap;
+	}
+	String heap_s = s.copy(mem);
+	g_intern.count++;
+	g_intern.rev[g_intern.count - 1] = heap_s;
+	g_intern.fwd.set(heap_s, g_intern.count);
+	return g_intern.count;
+}
+
+// Reverse lookup: atom ID -> original name.  Returns "" for out-of-range IDs
+// (0 is reserved as a "no atom" sentinel; the only legitimate ID > 0).
+fn String atom_name(uint id) {
+	if (id == 0 || id > g_intern.count) return "";
+	return g_intern.rev[id - 1];
+}
+
+// ============================================================================
 // HEAP TYPES
 // ============================================================================
 
@@ -181,8 +239,14 @@ struct Array {
 	Value[] items;
 }
 
+// Record keys are interned atom IDs (`uint`) instead of full `String`s.
+// GET / SET / `has_field` do a linear scan; comparing two `uint`s is ~3-4×
+// faster than comparing two `String` slices, and an atom is 4 bytes instead
+// of 16.  The reverse table (atom ID -> original name) lives in the global
+// `g_intern` and is used only for `show()` and error messages.
 struct Record {
-	String[] keys;
+	uint   refcount;
+	uint[] keys;
 	Value[] values;
 }
 
@@ -599,7 +663,7 @@ fn Value show(Value v) {
 		buf.append_char('{');
 		for (int i = 0; i < r.keys.len; i++) {
 			if (i > 0) buf.append(", ");
-			buf.append(r.keys[i]);
+			buf.append(atom_name(r.keys[i]));
 			buf.append(": ");
 			Value s = show(r.values[i]);
 			buf.append(*as_str(s));
@@ -746,9 +810,12 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 				return { .thrown = true, .value = mk_str("type error: has_field expects record") };
 			}
 			Record* r = as_rec(args[0]);
-			String k = *as_str(args[1]);
+			if (!is_str(args[1])) {
+				return { .thrown = true, .value = mk_str("type error: has_field expects string key") };
+			}
+			uint want = intern(*as_str(args[1]));
 			foreach (&key : r.keys) {
-				if (*key == k) return { .value = mk_bool(true) };
+				if (*key == want) return { .value = mk_bool(true) };
 			}
 			return { .value = mk_bool(false) };
 		case "len":
@@ -1269,12 +1336,13 @@ fn EvalResult eval(AstNode* node, Env* env) {
 				if (!is_str(k.value)) {
 					return { .thrown = true, .value = mk_str("type error: record key must be string") };
 				}
-				Record* r  = as_rec(o.value);
-				String key = *as_str(k.value);
+				Record* r = as_rec(o.value);
+				String  kk = *as_str(k.value);
+				uint    want = intern(kk);
 				foreach (i, &rk : r.keys) {
-					if (*rk == key) return { .value = r.values[i] };
+					if (*rk == want) return { .value = r.values[i] };
 				}
-				return { .thrown = true, .value = mk_str(string::tformat("no field '%s'", key)) };
+				return { .thrown = true, .value = mk_str(string::tformat("no field '%s'", kk)) };
 			}
 			return { .thrown = true, .value = mk_str("cannot index value") };
 		}
@@ -1303,22 +1371,24 @@ fn EvalResult eval(AstNode* node, Env* env) {
 				if (!is_str(k.value)) {
 					return { .thrown = true, .value = mk_str("type error: record key must be string") };
 				}
-				Record* r  = as_rec(o.value);
-				String key = *as_str(k.value);
+				Record* r   = as_rec(o.value);
+				String  kk  = *as_str(k.value);
+				uint    want = intern(kk);
 				foreach (i, &rk : r.keys) {
-					if (*rk == key) {
+					if (*rk == want) {
 						r.values[i] = v.value;
 						return { .value = v.value };
 					}
 				}
-				// new key: append
-				String[] nk = mem::talloc_array(String, r.keys.len + 1);
-				Value[] nv  = mem::talloc_array(Value, r.values.len + 1);
+				// new key: append.  Heap-allocate (not temp pool) so the
+				// grown slice outlives this eval's @pool frame.
+				uint[]  nk = mem::new_array(uint, r.keys.len + 1);
+				Value[] nv = mem::new_array(Value, r.values.len + 1);
 				for (int j = 0; j < r.keys.len; j++) {
 					nk[j] = r.keys[j];
 					nv[j] = r.values[j];
 				}
-				nk[r.keys.len] = key;
+				nk[r.keys.len] = want;
 				nv[r.values.len] = v.value;
 				r.keys = nk;
 				r.values = nv;
@@ -1330,7 +1400,10 @@ fn EvalResult eval(AstNode* node, Env* env) {
 
 		{
 			Record* r = new_record();
-			r.keys = node.names;
+			// Convert each field name (String) into an interned atom (uint).
+			uint[] atoms = mem::talloc_array(uint, node.names.len);
+			for (int i = 0; i < node.names.len; i++) atoms[i] = intern(node.names[i]);
+			r.keys = atoms;
 			Value[] vals = mem::talloc_array(Value, node.children.len);
 			for (int i = 0; i < node.children.len; i++) {
 				EvalResult e = eval(node.children[i], env);
@@ -1460,6 +1533,7 @@ fn Value run_source(String src)
 }
 
 fn int main(String[] args) {
+	intern_init();
 	builtin_env = make_builtin_env();
 	if (args.len < 2)
 	{

@@ -567,3 +567,87 @@ fn void test_rung2_match_non_exhaustive() @test {
 		assert(r.thrown, "expected non-exhaustive match to throw");
 	};
 }
+
+// ============================================================================
+// INTERN TABLE / ATOM-BASED RECORD KEY TESTS (Step 2 of compiler plan)
+// ============================================================================
+
+fn void test_intern_returns_same_id() @test {
+	uint a = intern("foo");
+	uint b = intern("foo");
+	uint c = intern("bar");
+	assert(a != 0);
+	assert(a == b, "same string should intern to same atom");
+	assert(a != c, "different strings should intern to different atoms");
+}
+
+fn void test_intern_dense_ids() @test {
+	uint x = intern("__test_dense_1");
+	uint y = intern("__test_dense_2");
+	uint z = intern("__test_dense_3");
+	assert(x + 1 == y, "atoms should be densely allocated");
+	assert(y + 1 == z, "atoms should be densely allocated");
+}
+
+fn void test_atom_name_round_trip() @test {
+	String s = "round_trip_atom";
+	uint id = intern(s);
+	String back = atom_name(id);
+	assert(back == s, "atom_name should return the original string");
+}
+
+fn void test_record_keys_are_atoms() @test {
+	@pool() {
+		// Construct a record and verify the keys array now holds atom IDs
+		// (uints), not Strings.  Same field name should intern to the same atom
+		// when looked up.
+		AstNode* prog = make_record({ "x" }, { make_lit(mk_num(7.0)) });
+		EvalResult r  = eval(prog, null);
+		assert(!r.thrown);
+		assert(is_rec(r.value));
+		Record* rec = as_rec(r.value);
+		assert(rec.keys.len == 1);
+		assert(rec.keys[0] == intern("x"));
+	};
+}
+
+fn void test_record_get_via_intern() @test {
+	@pool() {
+		// Even when the key is a fresh string (built at runtime), the GET
+		// path intern()s it before scanning the atom table.  The original
+		// field was interned at RECORD construction; the GET atom should
+		// match.
+		AstNode* built  = make_record({ "alpha" }, { make_lit(mk_num(1.0)) });
+		AstNode* get_it = make_get(built, make_lit(mk_str("alpha")));
+		Value v = eval_value(get_it);
+		assert(is_num(v));
+		assert(as_num(v) == 1.0);
+	};
+}
+
+fn void test_record_get_unknown_field_throws() @test {
+	@pool() {
+		AstNode* built  = make_record({ "x" }, { make_lit(mk_num(0.0)) });
+		AstNode* get_it = make_get(built, make_lit(mk_str("nope")));
+		EvalResult r = eval(get_it, null);
+		assert(r.thrown);
+	};
+}
+
+fn void test_record_set_appends_new_atom() @test {
+	@pool() {
+		// Setting a brand-new key must intern it and append the atom to the
+		// record's key array.  The record is mutated in place; the GET
+		// afterwards (via the env-bound name `r`) finds the new key.
+		// We use `make_var("r")` rather than the RECORD AST node directly
+		// so the mutation persists across the let-binding — re-evaluating
+		// the RECORD node would create a fresh record from `node.names`.
+		AstNode* r_init = make_record({ "x" }, { make_lit(mk_num(0.0)) });
+		AstNode* set_it = make_set(make_var("r"), make_lit(mk_str("y")), make_lit(mk_num(9.0)));
+		AstNode* get_it = make_get(make_var("r"), make_lit(mk_str("y")));
+		AstNode* prog   = make_let("r", r_init, make_let("_", set_it, get_it));
+		Value v = eval_value(prog);
+		assert(is_num(v));
+		assert(as_num(v) == 9.0);
+	};
+}
