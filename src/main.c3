@@ -122,6 +122,10 @@ const ulong TAG_RECORD  = 0x8000000000000000UL;
 const ulong TAG_CLOSURE = 0x8001000000000000UL;
 const ulong TAG_PRIM    = 0x8002000000000000UL;
 
+// High bit in Env.count signals "this Env doubles as a closure" — its
+// union carries closure_params instead of bindings.
+const uint CLOSURE_BIT  = 0x80000000;
+
 fn Value val_num(double d)   => (Value)bitcast(d, ulong);
 fn Value val_nil()           => (Value)TAG_NIL;
 fn Value val_bool(bool b)    => (Value)(TAG_BOOL | (ulong)b);
@@ -336,14 +340,22 @@ struct Binding {
 // storage inside the Env struct itself, eliminating a separate array alloc.
 // Multi-param frames use a heap-allocated Binding[].
 
+union EnvData {
+	Binding[] bindings;
+	uint[] closure_params;
+}
+
 struct Env {
 	Env* parent;
 	uint count;
 	// Inline storage for count == 1 (the common case in recursive calls)
 	uint inline_name_id;
 	Value inline_value;
-	// Heap storage for count > 1 (builtin_env, multi-param closures)
-	Binding[] bindings;
+	// When count & CLOSURE_BIT: this Env doubles as a closure — the union
+	// stores closure_params (slice to AST name_ids) instead of bindings,
+	// and inline_value holds the body AST pointer (reinterpreted as raw ptr).
+	// This eliminates a separate Closure heap allocation per LetRec+Lambda.
+	EnvData data;
 }
 
 // ============================================================================
@@ -756,9 +768,9 @@ fn Env* env_extend(Env* parent, uint[] name_ids, Value[] values) {
 		e.inline_value = values[0];
 	} else {
 		e.count = (uint)n;
-		e.bindings = mem::talloc_array(Binding, n);
+		e.data.bindings = mem::talloc_array(Binding, n);
 		for (int i = 0; i < n; i++) {
-			e.bindings[i] = { .name_id = name_ids[i], .value = values[i] };
+			e.data.bindings[i] = { .name_id = name_ids[i], .value = values[i] };
 		}
 	}
 	return e;
@@ -774,19 +786,35 @@ fn Env* env_define(Env* parent, uint name_id, Value v) {
 	return e;
 }
 
-fn Value env_lookup(Env* env, uint name_id, bool* found = null) {
+// LetRec+Lambda define: the Env doubles as a closure, carrying the
+// lambda's param_ids and body inline.  The body pointer is stored in
+// inline_value (reinterpreted as a raw pointer — unused as a Value for
+// closure envs).  The CALL fast path detects `count & CLOSURE_BIT` and
+// calls the closure directly, avoiding a separate Closure heap alloc.
+fn Env* env_define_closure(Env* parent, uint name_id, uint[] param_ids, AstNode* body) {
+	Env* e = mem::tnew(Env);
+	e.parent = parent;
+	e.count = 1 | CLOSURE_BIT;
+	e.inline_name_id = name_id;
+	e.data.closure_params = param_ids;
+	e.inline_value = (Value)(uptr)body;
+	return e;
+}
+
+fn Value env_lookup(Env* env, uint name_id, bool* found = null, Env** source = null) {
 	Env* cur = env;
 	while (cur != null) {
-		if (cur.count == 1) {
+		if (cur.count == 1 || (cur.count & CLOSURE_BIT)) {
 			if (cur.inline_name_id == name_id) {
 				if (found != null) *found = true;
+				if (source != null) *source = cur;
 				return cur.inline_value;
 			}
 		} else {
-			for (int i = 0; i < cur.bindings.len; i++) {
-				if (cur.bindings[i].name_id == name_id) {
+			for (int i = 0; i < cur.data.bindings.len; i++) {
+				if (cur.data.bindings[i].name_id == name_id) {
 					if (found != null) *found = true;
-					return cur.bindings[i].value;
+					return cur.data.bindings[i].value;
 				}
 			}
 		}
@@ -799,15 +827,15 @@ fn Value env_lookup(Env* env, uint name_id, bool* found = null) {
 fn void env_set(Env* env, uint name_id, Value v) {
 	Env* cur = env;
 	while (cur != null) {
-		if (cur.count == 1) {
+		if (cur.count == 1 || (cur.count & CLOSURE_BIT)) {
 			if (cur.inline_name_id == name_id) {
 				cur.inline_value = v;
 				return;
 			}
 		} else {
-			for (int i = 0; i < cur.bindings.len; i++) {
-				if (cur.bindings[i].name_id == name_id) {
-					cur.bindings[i].value = v;
+			for (int i = 0; i < cur.data.bindings.len; i++) {
+				if (cur.data.bindings[i].name_id == name_id) {
+					cur.data.bindings[i].value = v;
 					return;
 				}
 			}
@@ -818,15 +846,15 @@ fn void env_set(Env* env, uint name_id, Value v) {
 	// Rebuild the innermost scope with the new binding appended.
 	if (env.count == 1) {
 		env.count = 2;
-		env.bindings = mem::talloc_array(Binding, 2);
-		env.bindings[0] = { .name_id = env.inline_name_id, .value = env.inline_value };
-		env.bindings[1] = { .name_id = name_id, .value = v };
+		env.data.bindings = mem::talloc_array(Binding, 2);
+		env.data.bindings[0] = { .name_id = env.inline_name_id, .value = env.inline_value };
+		env.data.bindings[1] = { .name_id = name_id, .value = v };
 	} else {
-		long old_len = env.bindings.len;
+		long old_len = env.data.bindings.len;
 		Binding[] grown = mem::talloc_array(Binding, old_len + 1);
-		for (int i = 0; i < old_len; i++) grown[i] = env.bindings[i];
+		for (int i = 0; i < old_len; i++) grown[i] = env.data.bindings[i];
 		grown[old_len] = { .name_id = name_id, .value = v };
-		env.bindings = grown;
+		env.data.bindings = grown;
 		env.count = (uint)(old_len + 1);
 	}
 }
@@ -1380,9 +1408,20 @@ fn EvalResult eval(AstNode* node, Env* env) {
 			return { .value = node.literal };
 		case VAR:
 			bool found;
-			Value v = env_lookup(env, node.name_id, &found);
+			Env* source;
+			Value v = env_lookup(env, node.name_id, &found, &source);
 			if (!found) {
 				return { .thrown = true, .value = mk_str(string::tformat("unbound variable: %s", node.name)) };
+			}
+			// Lazy Closure creation: if `v` was found in an inline closure
+			// env (CLOSURE_BIT), the binding has no Value — create a real
+			// Closure on the fly so the value can be passed around.
+			if (source != null && (source.count & CLOSURE_BIT)) {
+				Closure* c = new_closure();
+				c.param_ids = source.data.closure_params;
+				c.body = (AstNode*)(uptr)source.inline_value;
+				c.env = source;
+				return { .value = val_closure(c) };
 			}
 			return { .value = v };
 		case LAMBDA:
@@ -1450,27 +1489,52 @@ fn EvalResult eval(AstNode* node, Env* env) {
 			// Fast path: direct VAR → Closure call — skip general eval/apply_fn.
 			if (node.children[0].type == VAR) {
 				bool found;
-				Value fn_val = env_lookup(env, node.children[0].name_id, &found);
-				if (found && is_closure(fn_val)) {
-					Closure* c = as_closure(fn_val);
-					int argc = node.children.len - 1;
-					if (argc == c.param_ids.len) {
-						// Ultra-fast path: single-param closure (fib hot path).
-						// Avoids the intermediate Value[] args allocation entirely.
-						if (argc == 1) {
-							EvalResult a = eval(node.children[1], env);
-							if (a.thrown) return a;
-							Env* call_env = env_extend1(c.env, c.param_ids[0], a.value);
+				Env* source;
+				Value fn_val = env_lookup(env, node.children[0].name_id, &found, &source);
+				if (found) {
+					// Ultra-fast path: inline closure env (LetRec+Lambda).
+					// No Closure object — metadata lives in the Env itself.
+					if (source != null && (source.count & CLOSURE_BIT)) {
+						int argc = node.children.len - 1;
+						if (argc == source.data.closure_params.len) {
+							if (argc == 1) {
+								EvalResult a = eval(node.children[1], env);
+								if (a.thrown) return a;
+								Env* call_env = env_extend1(source, source.data.closure_params[0], a.value);
+								return eval((AstNode*)(uptr)source.inline_value, call_env);
+							}
+							Value[8] stack_buf;
+							for (int i = 0; i < argc; i++) {
+								EvalResult a = eval(node.children[i + 1], env);
+								if (a.thrown) return a;
+								stack_buf[i] = a.value;
+							}
+							Env* call_env = env_extend(source, source.data.closure_params, stack_buf[0:argc]);
+							return eval((AstNode*)(uptr)source.inline_value, call_env);
+						}
+					}
+					// Normal Closure path — skip general eval/apply_fn.
+					if (is_closure(fn_val)) {
+						Closure* c = as_closure(fn_val);
+						int argc = node.children.len - 1;
+						if (argc == c.param_ids.len) {
+							// Ultra-fast path: single-param closure (fib hot path).
+							// Avoids the intermediate Value[] args allocation entirely.
+							if (argc == 1) {
+								EvalResult a = eval(node.children[1], env);
+								if (a.thrown) return a;
+								Env* call_env = env_extend1(c.env, c.param_ids[0], a.value);
+								return eval(c.body, call_env);
+							}
+							Value[] args = mem::talloc_array(Value, argc);
+							for (int i = 0; i < argc; i++) {
+								EvalResult a = eval(node.children[i + 1], env);
+								if (a.thrown) return a;
+								args[i] = a.value;
+							}
+							Env* call_env = env_extend(c.env, c.param_ids, args);
 							return eval(c.body, call_env);
 						}
-						Value[] args = mem::talloc_array(Value, argc);
-						for (int i = 0; i < argc; i++) {
-							EvalResult a = eval(node.children[i + 1], env);
-							if (a.thrown) return a;
-							args[i] = a.value;
-						}
-						Env* call_env = env_extend(c.env, c.param_ids, args);
-						return eval(c.body, call_env);
 					}
 				}
 				// Fall through: resolve fn_val via general path below if not a direct closure
@@ -1629,20 +1693,16 @@ fn EvalResult eval(AstNode* node, Env* env) {
 		case LETREC:
 
 		{
-			Env* rec = env_define(env, node.name_id, mk_nil());
-			// Fast path: if init is a Lambda, create the closure in-place
-			// without going through the full eval(Lambda) → switch dispatch.
+			// Fast path: if init is a Lambda, create an inline closure env
+			// — no separate Closure heap allocation needed.
 			if (node.children[0].type == LAMBDA) {
-				Closure* c = new_closure();
-				c.param_ids = node.children[0].name_ids;
-				c.body = node.children[0].children[0];
-				c.env = rec;
-				rec.inline_value = val_closure(c);
-			} else {
-				EvalResult init = eval(node.children[0], rec);
-				if (init.thrown) return init;
-				rec.inline_value = init.value;
+				Env* rec = env_define_closure(env, node.name_id, node.children[0].name_ids, node.children[0].children[0]);
+				return eval(node.children[1], rec);
 			}
+			Env* rec = env_define(env, node.name_id, mk_nil());
+			EvalResult init = eval(node.children[0], rec);
+			if (init.thrown) return init;
+			rec.inline_value = init.value;
 			return eval(node.children[1], rec);
 		}
 		case SEQ:
@@ -1683,10 +1743,10 @@ fn Env* make_builtin_env()
 	Env* e = mem::tnew(Env);
 	e.parent = null;
 	e.count = names.len;
-	e.bindings = mem::talloc_array(Binding, names.len);
+	e.data.bindings = mem::talloc_array(Binding, names.len);
 	for (int i = 0; i < names.len; i++)
 	{
-		e.bindings[i] = { .name_id = intern(names[i]), .value = mk_prim(names[i]) };
+		e.data.bindings[i] = { .name_id = intern(names[i]), .value = mk_prim(names[i]) };
 	}
 	return e;
 }

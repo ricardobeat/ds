@@ -1,6 +1,6 @@
 # Progress
 
-## Status: Build-order step 1 + step 2 — NaN-boxed Value + interned field atoms (DONE); tree-walker prim inlining (DONE); flat-array Env (DONE); tree-walker fast-path optimizations (DONE); interned variable names (DONE); inline single-binding Env (DONE)
+## Status: Build-order step 1 + step 2 — NaN-boxed Value + interned field atoms (DONE); tree-walker prim inlining (DONE); flat-array Env (DONE); tree-walker fast-path optimizations (DONE); interned variable names (DONE); inline single-binding Env (DONE); inline closure Env (DONE)
 
 Step 2 of the compiler plan (interned field name atoms) is now wired through
 the kernel: every distinct field name is assigned a dense `uint` atom ID by
@@ -94,6 +94,30 @@ Speed improvement (Apple M1, O3): fib(30) ~0.45s, fib(35) ~2.21s
 (~31% faster than the previous 3.21s due to fewer allocations and better
 cache locality from colocated name+value in the Env struct).
 
+**Inline closure Env** — for LetRec+Lambda patterns (the common case for
+recursive functions), the Env struct now doubles as a closure, carrying
+the lambda's param_ids and body pointer inline.  This eliminates a
+separate `Closure` heap allocation (~32 bytes) per LetRec evaluation.
+
+Implementation:
+- Added `CLOSURE_BIT` (high bit of `Env.count`) to signal "this Env is
+  a closure env".
+- Added `EnvData` union in Env: `Binding[]` for normal frames,
+  `uint[] closure_params` for closure envs.  The body pointer is stored
+  reinterpreted in `inline_value` (unused for closure envs).
+- `env_define_closure(parent, name_id, param_ids, body)` — creates an
+  inline closure Env.
+- CALL handler's VAR fast path detects `source.count & CLOSURE_BIT` and
+  calls the closure directly, using `env_extend1` / `env_extend` with
+  `source.data.closure_params` and `(AstNode*)(uptr)source.inline_value`.
+- VAR case creates a real `Closure` lazily only when a closure-bound
+  variable is used as a value (not called directly).
+
+Memory savings: for fib(35) with ~29M recursive calls, each LetRec now
+allocates 1 Env (40 bytes) instead of 1 Env + 1 Closure (40 + 32 = 72
+bytes).  This eliminates ~29M Closure heap allocations (~928 MB of temp
+pool usage).  The Env struct stays at 40 bytes (no size increase).
+
 The full kernel evaluator is in `src/main.c3` (~1400 LoC), the surface
 parser in `src/parser.c3` (~1080 LoC), and the round-trip formatter in
 `src/formatter.c3` (~440 LoC). 94 tests pass across kernel, parser,
@@ -134,6 +158,9 @@ element, formatter, and vdom test files.
 - Inline single-binding Env: `Binding` struct with inline storage for
   single-param closures, `env_extend1` for zero-alloc env creation
   (76% less memory, 31% faster fib)
+- Inline closure Env: LetRec+Lambda doubles the Env as a closure, carrying
+  param_ids and body inline — eliminates ~29M Closure allocs for fib(35)
+  (~928 MB temp pool savings, same wall-clock time)
 
 ### Element syntax
 
