@@ -1,6 +1,6 @@
 # Progress
 
-## Status: Build-order step 1 + step 2 — NaN-boxed Value + interned field atoms (DONE); tree-walker prim inlining (DONE); flat-array Env (DONE); tree-walker fast-path optimizations (DONE)
+## Status: Build-order step 1 + step 2 — NaN-boxed Value + interned field atoms (DONE); tree-walker prim inlining (DONE); flat-array Env (DONE); tree-walker fast-path optimizations (DONE); interned variable names (DONE)
 
 Step 2 of the compiler plan (interned field name atoms) is now wired through
 the kernel: every distinct field name is assigned a dense `uint` atom ID by
@@ -51,6 +51,23 @@ hottest eval loops:
 
 Measured improvement (Apple M1, O3): fib(30) 0.515s, fib(35) 3.37s.
 
+**Interned variable names** — every AST node that carries a name (VAR,
+LETREC, TRY, LAMBDA, PRIM, BINOP, METHODCALL, RECORD, MATCH, and their
+typed variants) now pre-computes a dense `uint` atom ID via `intern()` at
+construction time.  `Env.names` is `uint[]` instead of `String[]`, and
+`Closure.param_ids` is `uint[]` instead of `String[]`.  `env_lookup` and
+`env_set` compare single `uint` words instead of 16-byte String slices,
+eliminating the per-lookup `intern()` HashMap call and reducing each
+comparison from ~10 ns (length check + memcmp) to ~1 ns (integer equality).
+
+Memory savings: each Env frame's names array shrinks from 16 bytes per
+name (String slice) to 4 bytes (uint atom).  For fib(30) with ~5.2M
+recursive env frames at 1 name each, this saves ~62 MB of allocator
+pressure.
+
+Measured improvement (Apple M1, O3): fib(30) 0.273s (~47% faster than
+the previous 0.515s), fib(35) 3.21s.
+
 The full kernel evaluator is in `src/main.c3` (~1400 LoC), the surface
 parser in `src/parser.c3` (~1080 LoC), and the round-trip formatter in
 `src/formatter.c3` (~440 LoC). 94 tests pass across kernel, parser,
@@ -67,7 +84,8 @@ element, formatter, and vdom test files.
 - Value universe: Number, String, Bool, Nil, Array, Record, Closure,
   Primitive
 - Heap-allocated Array / Record / Closure / AstNode / Env
-- HashMap-backed `Env` (O(1) name lookup per scope)
+- Flat-array `Env` with uint atom IDs for O(1) integer comparison
+  name lookup per scope
 - NaN-boxed `Value` (8 bytes, fits 4× more per cache line than the old
   40-byte struct)
 - Interned field-name atoms (Step 2): `Record.keys` is `uint[]`, GET/SET
@@ -85,6 +103,8 @@ element, formatter, and vdom test files.
 - Round-trip formatter (parse + re-emit) with idempotence
 - Release build target (`c3c build release`) for O3 benchmarking
 - Inline numeric binops, direct VAR→Closure calls, LetRec Lambda fast path
+- Pre-interned variable names: uint atom IDs on AST nodes, `uint[]` env
+  names for fast integer comparison (47% faster fib)
 
 ### Element syntax
 
@@ -164,6 +184,5 @@ followed by `/` (the element closing tag).
 - [x] K. Interned field-name atoms (Step 2) — `Record.keys` is `uint[]`,
        `g_intern` is the global name-to-atom table
 - [ ] G. Bytecode compiler + VM (upvalue closing, TAILCALL, refcounting)
-- [ ] L. Parse-time intern of every literal field name (optional
-       micro-optimization; currently the intern happens at eval time on
-       first lookup, which is still O(1) amortized)
+- [x] L. Parse-time intern of every literal field name and variable name —
+      `name_id`/`name_ids` on all AST nodes, `Env.names` is `uint[]`

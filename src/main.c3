@@ -251,7 +251,7 @@ struct Record {
 }
 
 struct Closure {
-	String[] params;
+	uint[] param_ids;
 	AstNode* body;
 	Env* env;
 }
@@ -307,8 +307,10 @@ struct TypeDefEntry {
 struct AstNode {
 	NodeType type;
 	String name;
+	uint name_id;
 	Value literal;
 	String[] names;
+	uint[] name_ids;
 	AstNode*[] children;
 	// Surface-only annotation payload (LAMBDA_T, LET_T).  These are erased
 	// during desugaring; the kernel evaluator never sees them.
@@ -326,7 +328,7 @@ struct AstNode {
 // (per the current --test-noleak policy — refcounting lands with the VM).
 
 struct Env {
-	String[] names;
+	uint[] names;
 	Value[] values;
 	Env* parent;
 }
@@ -390,6 +392,7 @@ fn AstNode* make_var(String name) {
 	AstNode* n = mem::tnew(AstNode);
 	n.type = VAR;
 	n.name = name;
+	n.name_id = intern(name);
 	return n;
 }
 
@@ -399,8 +402,13 @@ fn AstNode* make_lambda(String[] params, AstNode* body) {
 	AstNode* n = mem::tnew(AstNode);
 	n.type = LAMBDA;
 	String[] heap_params = mem::talloc_array(String, params.len);
-	for (int i = 0; i < params.len; i++) heap_params[i] = params[i];
+	uint[] param_ids = mem::talloc_array(uint, params.len);
+	for (int i = 0; i < params.len; i++) {
+		heap_params[i] = params[i];
+		param_ids[i] = intern(params[i]);
+	}
 	n.names = heap_params;
+	n.name_ids = param_ids;
 	AstNode*[] kids = mem::talloc_array(AstNode*, 1);
 	kids[0] = body;
 	n.children = kids;
@@ -434,8 +442,13 @@ fn AstNode* make_record(String[] keys, AstNode*[] vals) {
 	AstNode* n = mem::tnew(AstNode);
 	n.type = RECORD;
 	String[] heap_keys = mem::talloc_array(String, keys.len);
-	for (int i = 0; i < keys.len; i++) heap_keys[i] = keys[i];
+	uint[] key_ids = mem::talloc_array(uint, keys.len);
+	for (int i = 0; i < keys.len; i++) {
+		heap_keys[i] = keys[i];
+		key_ids[i] = intern(keys[i]);
+	}
 	n.names = heap_keys;
+	n.name_ids = key_ids;
 	n.children = vals;
 	return n;
 }
@@ -481,6 +494,7 @@ fn AstNode* make_try(AstNode* body, String cname, AstNode* handler) {
 	AstNode* n = mem::tnew(AstNode);
 	n.type = TRY;
 	n.name = cname;
+	n.name_id = intern(cname);
 	AstNode*[] kids = mem::talloc_array(AstNode*, 2);
 	kids[0] = body;
 	kids[1] = handler;
@@ -492,6 +506,7 @@ fn AstNode* make_prim_node(String name) {
 	AstNode* n = mem::tnew(AstNode);
 	n.type = PRIM;
 	n.name = name;
+	n.name_id = intern(name);
 	return n;
 }
 
@@ -499,6 +514,7 @@ fn AstNode* make_letrec(String name, AstNode* init, AstNode* body) {
 	AstNode* n = mem::tnew(AstNode);
 	n.type = LETREC;
 	n.name = name;
+	n.name_id = intern(name);
 	AstNode*[] kids = mem::talloc_array(AstNode*, 2);
 	kids[0] = init;
 	kids[1] = body;
@@ -517,6 +533,7 @@ fn AstNode* make_binop_node(String op, AstNode* lhs, AstNode* rhs) {
 	AstNode* n = mem::tnew(AstNode);
 	n.type = BINOP;
 	n.name = op;
+	n.name_id = intern(op);
 	AstNode*[] kids = mem::talloc_array(AstNode*, 2);
 	kids[0] = lhs;
 	kids[1] = rhs;
@@ -528,6 +545,7 @@ fn AstNode* make_methodcall(AstNode* recv, String name, AstNode*[] args) {
 	AstNode* n = mem::tnew(AstNode);
 	n.type = METHODCALL;
 	n.name = name;
+	n.name_id = intern(name);
 	AstNode*[] kids = mem::talloc_array(AstNode*, args.len + 1);
 	kids[0] = recv;
 	for (int i = 0; i < args.len; i++) kids[i + 1] = args[i];
@@ -553,8 +571,13 @@ fn AstNode* make_typed_lambda(String[] names, Type*[] param_types, Type* ret_typ
 	AstNode* n = mem::tnew(AstNode);
 	n.type = LAMBDA_T;
 	String[] heap_names = mem::talloc_array(String, names.len);
-	for (int i = 0; i < names.len; i++) heap_names[i] = names[i];
+	uint[] name_ids_arr = mem::talloc_array(uint, names.len);
+	for (int i = 0; i < names.len; i++) {
+		heap_names[i] = names[i];
+		name_ids_arr[i] = intern(names[i]);
+	}
 	n.names = heap_names;
+	n.name_ids = name_ids_arr;
 	n.param_types = param_types;
 	n.ret_type = ret_type;
 	AstNode*[] kids = mem::talloc_array(AstNode*, 1);
@@ -567,6 +590,7 @@ fn AstNode* make_typed_let(String name, Type* ann_type, AstNode* init, AstNode* 
 	AstNode* n = mem::tnew(AstNode);
 	n.type = LET_T;
 	n.name = name;
+	n.name_id = intern(name);
 	n.ann_type = ann_type;
 	AstNode*[] kids = mem::talloc_array(AstNode*, 2);
 	kids[0] = init;
@@ -579,6 +603,7 @@ fn AstNode* make_typedef(String name, Type* t, AstNode* body) {
 	AstNode* n = mem::tnew(AstNode);
 	n.type = TYPEDEF;
 	n.name = name;
+	n.name_id = intern(name);
 	n.ret_type = t;
 	AstNode*[] kids = mem::talloc_array(AstNode*, 1);
 	kids[0] = body;
@@ -590,6 +615,7 @@ fn AstNode* make_construct(String tag, AstNode* val) {
 	AstNode* n = mem::tnew(AstNode);
 	n.type = CONSTRUCT;
 	n.name = tag;
+	n.name_id = intern(tag);
 	AstNode*[] kids = mem::talloc_array(AstNode*, 1);
 	kids[0] = val;
 	n.children = kids;
@@ -602,14 +628,18 @@ fn AstNode* make_match(AstNode* scrut, String[] tags, String[] binds, AstNode*[]
 	AstNode* n = mem::tnew(AstNode);
 	n.type = MATCH;
 	String[] nm = mem::talloc_array(String, 2 * tags.len);
+	uint[] nm_ids = mem::talloc_array(uint, 2 * tags.len);
 	AstNode*[] kids = mem::talloc_array(AstNode*, bodies.len + 1);
 	kids[0] = scrut;
 	for (int i = 0; i < tags.len; i++) {
 		nm[2 * i] = tags[i];
 		nm[2 * i + 1] = binds[i];
+		nm_ids[2 * i] = intern(tags[i]);
+		nm_ids[2 * i + 1] = intern(binds[i]);
 		kids[i + 1] = bodies[i];
 	}
 	n.names = nm;
+	n.name_ids = nm_ids;
 	n.children = kids;
 	return n;
 }
@@ -677,9 +707,9 @@ fn Value show(Value v) {
 		DString buf;
 		buf.init(mem);
 		buf.append("<closure(");
-		for (int i = 0; i < c.params.len; i++) {
+		for (int i = 0; i < c.param_ids.len; i++) {
 			if (i > 0) buf.append(", ");
-			buf.append(c.params[i]);
+			buf.append(atom_name(c.param_ids[i]));
 		}
 		buf.append(")>");
 		return mk_str(buf.str_view());
@@ -692,7 +722,7 @@ fn Value show(Value v) {
 // ENV HELPERS
 // ============================================================================
 
-fn Env* env_extend(Env* parent, String[] names, Value[] values) {
+fn Env* env_extend(Env* parent, uint[] names, Value[] values) {
 	Env* e = mem::tnew(Env);
 	e.parent = parent;
 	e.names = names;
@@ -703,18 +733,18 @@ fn Env* env_extend(Env* parent, String[] names, Value[] values) {
 fn Env* env_define(Env* parent, String name, Value v) {
 	Env* e = mem::tnew(Env);
 	e.parent = parent;
-	e.names = mem::talloc_array(String, 1);
-	e.names[0] = name;
+	e.names = mem::talloc_array(uint, 1);
+	e.names[0] = intern(name);
 	e.values = mem::talloc_array(Value, 1);
 	e.values[0] = v;
 	return e;
 }
 
-fn Value env_lookup(Env* env, String name, bool* found = null) {
+fn Value env_lookup(Env* env, uint name_id, bool* found = null) {
 	Env* cur = env;
 	while (cur != null) {
 		for (int i = 0; i < cur.names.len; i++) {
-			if (cur.names[i] == name) {
+			if (cur.names[i] == name_id) {
 				if (found != null) *found = true;
 				return cur.values[i];
 			}
@@ -725,11 +755,11 @@ fn Value env_lookup(Env* env, String name, bool* found = null) {
 	return mk_nil();
 }
 
-fn void env_set(Env* env, String name, Value v) {
+fn void env_set(Env* env, uint name_id, Value v) {
 	Env* cur = env;
 	while (cur != null) {
 		for (int i = 0; i < cur.names.len; i++) {
-			if (cur.names[i] == name) {
+			if (cur.names[i] == name_id) {
 				cur.values[i] = v;
 				return;
 			}
@@ -738,13 +768,13 @@ fn void env_set(Env* env, String name, Value v) {
 	}
 	// Unbound: add to the innermost scope.
 	long old_len = env.names.len;
-	String[] new_names = mem::talloc_array(String, old_len + 1);
+	uint[] new_names = mem::talloc_array(uint, old_len + 1);
 	Value[] new_vals = mem::talloc_array(Value, old_len + 1);
 	for (int i = 0; i < old_len; i++) {
 		new_names[i] = env.names[i];
 		new_vals[i] = env.values[i];
 	}
-	new_names[old_len] = name;
+	new_names[old_len] = name_id;
 	new_vals[old_len] = v;
 	env.names = new_names;
 	env.values = new_vals;
@@ -1064,6 +1094,7 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 				AstNode* n = mem::tnew(AstNode);
 				n.type = LAMBDA;
 				n.names = e.names;
+				n.name_ids = e.name_ids;
 				AstNode*[] kids = mem::talloc_array(AstNode*, e.children.len);
 				for (int i = 0; i < e.children.len; i++) kids[i] = desugar(e.children[i], tenv);
 				n.children = kids;
@@ -1080,6 +1111,7 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 				AstNode* n = mem::tnew(AstNode);
 				n.type = RECORD;
 				n.names = e.names;
+				n.name_ids = e.name_ids;
 				AstNode*[] out = mem::talloc_array(AstNode*, e.children.len);
 				for (int i = 0; i < e.children.len; i++) out[i] = desugar(e.children[i], tenv);
 				n.children = out;
@@ -1093,6 +1125,7 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 				AstNode* n = mem::tnew(AstNode);
 				n.type = TRY;
 				n.name = e.name;
+				n.name_id = e.name_id;
 				AstNode*[] out = mem::talloc_array(AstNode*, e.children.len);
 				for (int i = 0; i < e.children.len; i++) out[i] = desugar(e.children[i], tenv);
 				n.children = out;
@@ -1104,6 +1137,7 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 				AstNode* n = mem::tnew(AstNode);
 				n.type = LETREC;
 				n.name = e.name;
+				n.name_id = e.name_id;
 				AstNode*[] out = mem::talloc_array(AstNode*, e.children.len);
 				for (int i = 0; i < e.children.len; i++) out[i] = desugar(e.children[i], tenv);
 				n.children = out;
@@ -1170,6 +1204,7 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 				AstNode* n = mem::tnew(AstNode);
 				n.type = LAMBDA;
 				n.names = heap_names;
+				n.name_ids = e.name_ids;
 				AstNode*[] kids = mem::talloc_array(AstNode*, 1);
 				kids[0] = checked;
 				n.children = kids;
@@ -1189,6 +1224,7 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 				AstNode* n = mem::tnew(AstNode);
 				n.type = LETREC;
 				n.name = e.name;
+				n.name_id = e.name_id;
 				AstNode*[] kids = mem::talloc_array(AstNode*, 2);
 				kids[0] = init_d;
 				kids[1] = body_d;
@@ -1267,13 +1303,13 @@ fn EvalResult apply_fn(Value fn_val, Value[] args) {
 	}
 	if (is_closure(fn_val)) {
 		Closure* c = as_closure(fn_val);
-		if (args.len != c.params.len) {
+		if (args.len != c.param_ids.len) {
 			return {
 				.thrown = true,
-				.value = mk_str(string::tformat("arity error: expected %d, got %d", c.params.len, args.len))
+				.value = mk_str(string::tformat("arity error: expected %d, got %d", c.param_ids.len, args.len))
 			};
 		}
-		Env* call_env = env_extend(c.env, c.params, args);
+		Env* call_env = env_extend(c.env, c.param_ids, args);
 		return eval(c.body, call_env);
 	}
 	return { .thrown = true, .value = mk_str("not callable") };
@@ -1289,7 +1325,7 @@ fn EvalResult eval(AstNode* node, Env* env) {
 			return { .value = node.literal };
 		case VAR:
 			bool found;
-			Value v = env_lookup(env, node.name, &found);
+			Value v = env_lookup(env, node.name_id, &found);
 			if (!found) {
 				return { .thrown = true, .value = mk_str(string::tformat("unbound variable: %s", node.name)) };
 			}
@@ -1298,7 +1334,7 @@ fn EvalResult eval(AstNode* node, Env* env) {
 
 		{
 			Closure* c = new_closure();
-			c.params = node.names;
+			c.param_ids = node.name_ids;
 			c.body = node.children[0];
 			c.env = env;
 			return { .value = val_closure(c) };
@@ -1359,18 +1395,18 @@ fn EvalResult eval(AstNode* node, Env* env) {
 			// Fast path: direct VAR → Closure call — skip general eval/apply_fn.
 			if (node.children[0].type == VAR) {
 				bool found;
-				Value fn_val = env_lookup(env, node.children[0].name, &found);
+				Value fn_val = env_lookup(env, node.children[0].name_id, &found);
 				if (found && is_closure(fn_val)) {
 					Closure* c = as_closure(fn_val);
 					int argc = node.children.len - 1;
-					if (argc == c.params.len) {
+					if (argc == c.param_ids.len) {
 						Value[] args = mem::talloc_array(Value, argc);
 						for (int i = 0; i < argc; i++) {
 							EvalResult a = eval(node.children[i + 1], env);
 							if (a.thrown) return a;
 							args[i] = a.value;
 						}
-						Env* call_env = env_extend(c.env, c.params, args);
+						Env* call_env = env_extend(c.env, c.param_ids, args);
 						return eval(c.body, call_env);
 					}
 				}
@@ -1537,7 +1573,7 @@ fn EvalResult eval(AstNode* node, Env* env) {
 			// without going through the full eval(Lambda) → switch dispatch.
 			if (node.children[0].type == LAMBDA) {
 				Closure* c = new_closure();
-				c.params = node.children[0].names;
+				c.param_ids = node.children[0].name_ids;
 				c.body = node.children[0].children[0];
 				c.env = rec;
 				rec.values[0] = val_closure(c);
@@ -1583,16 +1619,16 @@ fn Env* make_builtin_env()
 		"is_number", "is_string", "is_bool", "is_array", "is_record", "is_nil",
 		"has_field", "len", "push", "print", "array_all", "slice",
 	};
-	String[] heap_names = mem::talloc_array(String, names.len);
-	for (int i = 0; i < names.len; i++) heap_names[i] = names[i];
+	uint[] ids = mem::talloc_array(uint, names.len);
 	Value[] values = mem::talloc_array(Value, names.len);
 	for (int i = 0; i < names.len; i++)
 	{
-		values[i] = mk_prim(heap_names[i]);
+		ids[i] = intern(names[i]);
+		values[i] = mk_prim(names[i]);
 	}
 	Env* e = mem::tnew(Env);
 	e.parent = null;
-	e.names = heap_names;
+	e.names = ids;
 	e.values = values;
 	return e;
 }
