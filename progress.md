@@ -1,6 +1,6 @@
 # Progress
 
-## Status: Build-order step 1 + step 2 — NaN-boxed Value + interned field atoms (DONE); tree-walker prim inlining (DONE)
+## Status: Build-order step 1 + step 2 — NaN-boxed Value + interned field atoms (DONE); tree-walker prim inlining (DONE); flat-array Env (DONE)
 
 Step 2 of the compiler plan (interned field name atoms) is now wired through
 the kernel: every distinct field name is assigned a dense `uint` atom ID by
@@ -17,6 +17,16 @@ All 94 tests pass.
   - `apply_fn` → `env_extend` → HashMap creation overhead
 
 Measured improvement: fib(30) 3.68s → 2.99s (~19% faster).
+
+**Flat-array Env** — replaced `HashMap{String, Value}` in `Env` with flat
+`String[]`/`Value[]` arrays.  `env_extend` (called ~2.7M times for fib(30))
+now just stores two pointer assignments instead of allocating a HashMap,
+initializing its bucket array, and hashing+inserting.  `env_lookup` scans
+1-2 names per scope level, which for single-param closures is a single
+string comparison — faster than hash+bucket overhead.  `env_define` creates
+single-entry arrays for LETREC/TRY bindings.
+
+Measured improvement: fib(30) 2.99s → 2.82s (~6% faster on top of prim inlining).
 
 The full kernel evaluator is in `src/main.c3` (~1400 LoC), the surface
 parser in `src/parser.c3` (~1080 LoC), and the round-trip formatter in

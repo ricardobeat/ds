@@ -326,7 +326,8 @@ struct AstNode {
 // (per the current --test-noleak policy — refcounting lands with the VM).
 
 struct Env {
-	HashMap{String, Value}* map;
+	String[] names;
+	Value[] values;
 	Env* parent;
 }
 
@@ -694,29 +695,29 @@ fn Value show(Value v) {
 fn Env* env_extend(Env* parent, String[] names, Value[] values) {
 	Env* e = mem::tnew(Env);
 	e.parent = parent;
-	e.map = mem::tnew(HashMap{String, Value});
-	e.map.tinit();
-	for (int i = 0; i < names.len; i++) {
-		e.map.set(names[i], values[i]);
-	}
+	e.names = names;
+	e.values = values;
 	return e;
 }
 
 fn Env* env_define(Env* parent, String name, Value v) {
 	Env* e = mem::tnew(Env);
 	e.parent = parent;
-	e.map = mem::tnew(HashMap{String, Value});
-	e.map.tinit();
-	e.map.set(name, v);
+	e.names = mem::talloc_array(String, 1);
+	e.names[0] = name;
+	e.values = mem::talloc_array(Value, 1);
+	e.values[0] = v;
 	return e;
 }
 
 fn Value env_lookup(Env* env, String name, bool* found = null) {
 	Env* cur = env;
 	while (cur != null) {
-		if (try v = cur.map.get(name)) {
-			if (found != null) *found = true;
-			return v;
+		for (int i = 0; i < cur.names.len; i++) {
+			if (cur.names[i] == name) {
+				if (found != null) *found = true;
+				return cur.values[i];
+			}
 		}
 		cur = cur.parent;
 	}
@@ -727,15 +728,26 @@ fn Value env_lookup(Env* env, String name, bool* found = null) {
 fn void env_set(Env* env, String name, Value v) {
 	Env* cur = env;
 	while (cur != null) {
-		if (cur.map.has_key(name)) {
-			cur.map.set(name, v);
-			return;
+		for (int i = 0; i < cur.names.len; i++) {
+			if (cur.names[i] == name) {
+				cur.values[i] = v;
+				return;
+			}
 		}
 		cur = cur.parent;
 	}
-	// Unbound assignment: set adds to the innermost scope, matching JS-y
-	// "set adds" behavior so things don't disappear silently.
-	env.map.set(name, v);
+	// Unbound: add to the innermost scope.
+	long old_len = env.names.len;
+	String[] new_names = mem::talloc_array(String, old_len + 1);
+	Value[] new_vals = mem::talloc_array(Value, old_len + 1);
+	for (int i = 0; i < old_len; i++) {
+		new_names[i] = env.names[i];
+		new_vals[i] = env.values[i];
+	}
+	new_names[old_len] = name;
+	new_vals[old_len] = v;
+	env.names = new_names;
+	env.values = new_vals;
 }
 
 // ============================================================================
@@ -1466,7 +1478,7 @@ fn EvalResult eval(AstNode* node, Env* env) {
 			EvalResult init = eval(node.children[0], rec);
 			if (init.thrown) return init;
 			// Patch the binding with the actual value so the closure can see itself.
-			rec.map.set(node.name, init.value);
+			rec.values[0] = init.value;
 			return eval(node.children[1], rec);
 		}
 		case SEQ:
@@ -1504,14 +1516,17 @@ fn Env* make_builtin_env()
 		"is_number", "is_string", "is_bool", "is_array", "is_record", "is_nil",
 		"has_field", "len", "push", "print", "array_all", "slice",
 	};
-	Env* e = mem::tnew(Env);
-	e.parent = null;
-	e.map = mem::tnew(HashMap{String, Value});
-	e.map.tinit();
+	String[] heap_names = mem::talloc_array(String, names.len);
+	for (int i = 0; i < names.len; i++) heap_names[i] = names[i];
+	Value[] values = mem::talloc_array(Value, names.len);
 	for (int i = 0; i < names.len; i++)
 	{
-		e.map.set(names[i], mk_prim(names[i]));
+		values[i] = mk_prim(heap_names[i]);
 	}
+	Env* e = mem::tnew(Env);
+	e.parent = null;
+	e.names = heap_names;
+	e.values = values;
 	return e;
 }
 
