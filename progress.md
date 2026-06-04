@@ -1,6 +1,6 @@
 # Progress
 
-## Status: Build-order step 1 + step 2 — NaN-boxed Value + interned field atoms (DONE); tree-walker prim inlining (DONE); flat-array Env (DONE); tree-walker fast-path optimizations (DONE); interned variable names (DONE); inline single-binding Env (DONE); inline closure Env (DONE)
+## Status: Build-order step 1 + step 2 — NaN-boxed Value + interned field atoms (DONE); tree-walker prim inlining (DONE); flat-array Env (DONE); tree-walker fast-path optimizations (DONE); interned variable names (DONE); inline single-binding Env (DONE); inline closure Env (DONE); compact 24-byte Env (DONE)
 
 Step 2 of the compiler plan (interned field name atoms) is now wired through
 the kernel: every distinct field name is assigned a dense `uint` atom ID by
@@ -118,6 +118,35 @@ allocates 1 Env (40 bytes) instead of 1 Env + 1 Closure (40 + 32 = 72
 bytes).  This eliminates ~29M Closure heap allocations (~928 MB of temp
 pool usage).  The Env struct stays at 40 bytes (no size increase).
 
+**Compact 24-byte Env** — the `Env` struct was shrunk from 40 bytes to 24
+bytes (40% reduction) by eliminating the separate `inline_name_id`,
+`inline_value`, and `EnvData` union in favor of a compact layout:
+
+```c3
+struct Env {
+    Env* parent;   // 8 bytes
+    uint count;    // 4 bytes (includes CLOSURE_BIT flag)
+    uint name_id;  // 4 bytes (single-param or closure binding name)
+    EnvData data;  // 8 bytes (union of Value / AstNode* / Binding*)
+}
+```
+
+For single-param frames (`count == 1`): `name_id` + `data.value`.
+For multi-param frames (`count > 1`): `data.bindings_ptr` is a raw
+pointer; length derived from `count`, eliminating the 16-byte `Binding[]`
+slice in favor of an 8-byte pointer.
+For inline closure envs (`CLOSURE_BIT`): `data.lambda_node` stores a
+pointer to the LAMBDA AST node — param IDs and body are derived from
+`lambda_node.name_ids` and `lambda_node.children[0]`, eliminating the
+need for separate `closure_params` slice + `body` pointer fields.
+
+Memory savings: for fib(35) with ~29M recursive calls, each Env goes from
+40 bytes to 24 bytes, saving ~464 MB of temp pool usage (~40% reduction).
+
+Speed improvement (Apple M1, O3): fib(30) ~0.20s, fib(35) ~2.21s
+(~8% faster due to better cache utilization from smaller Env structs
+fitting more per cache line).
+
 The full kernel evaluator is in `src/main.c3` (~1400 LoC), the surface
 parser in `src/parser.c3` (~1080 LoC), and the round-trip formatter in
 `src/formatter.c3` (~440 LoC). 94 tests pass across kernel, parser,
@@ -161,6 +190,9 @@ element, formatter, and vdom test files.
 - Inline closure Env: LetRec+Lambda doubles the Env as a closure, carrying
   param_ids and body inline — eliminates ~29M Closure allocs for fib(35)
   (~928 MB temp pool savings, same wall-clock time)
+- Compact 24-byte Env: 40% smaller Env struct (24 vs 40 bytes), lambda_node
+  pointer for inline closures, raw pointer for multi-binding frames — saves
+  ~464 MB for fib(35), ~8% faster fib
 
 ### Element syntax
 
