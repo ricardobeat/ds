@@ -1,6 +1,6 @@
 # Progress
 
-## Status: Build-order step 1 + step 2 — NaN-boxed Value + interned field atoms (DONE); tree-walker prim inlining (DONE); flat-array Env (DONE); tree-walker fast-path optimizations (DONE); interned variable names (DONE)
+## Status: Build-order step 1 + step 2 — NaN-boxed Value + interned field atoms (DONE); tree-walker prim inlining (DONE); flat-array Env (DONE); tree-walker fast-path optimizations (DONE); interned variable names (DONE); inline single-binding Env (DONE)
 
 Step 2 of the compiler plan (interned field name atoms) is now wired through
 the kernel: every distinct field name is assigned a dense `uint` atom ID by
@@ -68,6 +68,32 @@ pressure.
 Measured improvement (Apple M1, O3): fib(30) 0.273s (~47% faster than
 the previous 0.515s), fib(35) 3.21s.
 
+**Inline single-binding Env** — the `Env` struct now carries inline storage
+for the common single-param closure case (`count == 1`), eliminating a
+separate `uint[1]` + `Value[1]` heap allocation pair per frame.  Multi-param
+frames (builtin_env, etc.) use a unified `Binding[]` array instead of
+parallel `uint[]`/`Value[]` arrays.  New helpers:
+
+- `env_extend1(parent, name_id, value)` — single-param fast path, 1 alloc
+  (Env struct only) instead of the previous 2 (args Value[] + Env).
+- `env_define(parent, name_id, value)` — now takes a pre-interned `uint`
+  instead of `String`, avoiding a redundant `intern()` HashMap probe.
+- CALL handler's VAR→Closure fast path special-cases `argc == 1` to call
+  `env_extend1` directly, skipping the intermediate `Value[]` allocation.
+- RECORD eval now uses `node.name_ids` (pre-interned at parse time) instead
+  of re-interning field names at runtime.
+
+Memory savings: for fib(35) with ~29M recursive calls, each call previously
+allocated `talloc_array(Value, 1)` + `tnew(Env)` + `talloc_array(uint, 1)` +
+`talloc_array(Value, 1)` = 4 allocs.  Now each call allocates only
+`tnew(Env)` = 1 alloc (the single binding is inline).  This eliminates
+~87M heap allocations for fib(35), reducing peak RSS from 9.8 GB to 2.3 GB
+(~76% reduction).
+
+Speed improvement (Apple M1, O3): fib(30) ~0.45s, fib(35) ~2.21s
+(~31% faster than the previous 3.21s due to fewer allocations and better
+cache locality from colocated name+value in the Env struct).
+
 The full kernel evaluator is in `src/main.c3` (~1400 LoC), the surface
 parser in `src/parser.c3` (~1080 LoC), and the round-trip formatter in
 `src/formatter.c3` (~440 LoC). 94 tests pass across kernel, parser,
@@ -105,6 +131,9 @@ element, formatter, and vdom test files.
 - Inline numeric binops, direct VAR→Closure calls, LetRec Lambda fast path
 - Pre-interned variable names: uint atom IDs on AST nodes, `uint[]` env
   names for fast integer comparison (47% faster fib)
+- Inline single-binding Env: `Binding` struct with inline storage for
+  single-param closures, `env_extend1` for zero-alloc env creation
+  (76% less memory, 31% faster fib)
 
 ### Element syntax
 

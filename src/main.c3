@@ -320,17 +320,30 @@ struct AstNode {
 }
 
 // ============================================================================
+// BINDING (name-value pair for Env frames)
+// ============================================================================
+
+struct Binding {
+	uint name_id;
+	Value value;
+}
+
+// ============================================================================
 // ENVIRONMENT (lexical scope, parent chain)
 // ============================================================================
-// 
-// Each Env carries a HashMap{String, Value} for O(1) name lookup.  The HashMap
-// is heap-allocated and initialized with the heap allocator; we don't free it
-// (per the current --test-noleak policy — refcounting lands with the VM).
+//
+// Optimised for the hot path: single-param closures (fib, etc.) use inline
+// storage inside the Env struct itself, eliminating a separate array alloc.
+// Multi-param frames use a heap-allocated Binding[].
 
 struct Env {
-	uint[] names;
-	Value[] values;
 	Env* parent;
+	uint count;
+	// Inline storage for count == 1 (the common case in recursive calls)
+	uint inline_name_id;
+	Value inline_value;
+	// Heap storage for count > 1 (builtin_env, multi-param closures)
+	Binding[] bindings;
 }
 
 // ============================================================================
@@ -722,31 +735,59 @@ fn Value show(Value v) {
 // ENV HELPERS
 // ============================================================================
 
-fn Env* env_extend(Env* parent, uint[] names, Value[] values) {
+// Single-param fast path: zero array allocations for the hot fib/closure case.
+fn Env* env_extend1(Env* parent, uint name_id, Value value) {
 	Env* e = mem::tnew(Env);
 	e.parent = parent;
-	e.names = names;
-	e.values = values;
+	e.count = 1;
+	e.inline_name_id = name_id;
+	e.inline_value = value;
 	return e;
 }
 
-fn Env* env_define(Env* parent, String name, Value v) {
+// Multi-param path: wraps caller-provided arrays into a Binding[].
+fn Env* env_extend(Env* parent, uint[] name_ids, Value[] values) {
+	int n = name_ids.len;
 	Env* e = mem::tnew(Env);
 	e.parent = parent;
-	e.names = mem::talloc_array(uint, 1);
-	e.names[0] = intern(name);
-	e.values = mem::talloc_array(Value, 1);
-	e.values[0] = v;
+	if (n == 1) {
+		e.count = 1;
+		e.inline_name_id = name_ids[0];
+		e.inline_value = values[0];
+	} else {
+		e.count = (uint)n;
+		e.bindings = mem::talloc_array(Binding, n);
+		for (int i = 0; i < n; i++) {
+			e.bindings[i] = { .name_id = name_ids[i], .value = values[i] };
+		}
+	}
+	return e;
+}
+
+// Single-binding define (LETREC, TRY catch): inline, no array alloc.
+fn Env* env_define(Env* parent, uint name_id, Value v) {
+	Env* e = mem::tnew(Env);
+	e.parent = parent;
+	e.count = 1;
+	e.inline_name_id = name_id;
+	e.inline_value = v;
 	return e;
 }
 
 fn Value env_lookup(Env* env, uint name_id, bool* found = null) {
 	Env* cur = env;
 	while (cur != null) {
-		for (int i = 0; i < cur.names.len; i++) {
-			if (cur.names[i] == name_id) {
+		if (cur.count == 1) {
+			if (cur.inline_name_id == name_id) {
 				if (found != null) *found = true;
-				return cur.values[i];
+				return cur.inline_value;
+			}
+		} else {
+			for (int i = 0; i < cur.bindings.len; i++) {
+				if (cur.bindings[i].name_id == name_id) {
+					if (found != null) *found = true;
+					return cur.bindings[i].value;
+				}
 			}
 		}
 		cur = cur.parent;
@@ -758,26 +799,36 @@ fn Value env_lookup(Env* env, uint name_id, bool* found = null) {
 fn void env_set(Env* env, uint name_id, Value v) {
 	Env* cur = env;
 	while (cur != null) {
-		for (int i = 0; i < cur.names.len; i++) {
-			if (cur.names[i] == name_id) {
-				cur.values[i] = v;
+		if (cur.count == 1) {
+			if (cur.inline_name_id == name_id) {
+				cur.inline_value = v;
 				return;
+			}
+		} else {
+			for (int i = 0; i < cur.bindings.len; i++) {
+				if (cur.bindings[i].name_id == name_id) {
+					cur.bindings[i].value = v;
+					return;
+				}
 			}
 		}
 		cur = cur.parent;
 	}
-	// Unbound: add to the innermost scope.
-	long old_len = env.names.len;
-	uint[] new_names = mem::talloc_array(uint, old_len + 1);
-	Value[] new_vals = mem::talloc_array(Value, old_len + 1);
-	for (int i = 0; i < old_len; i++) {
-		new_names[i] = env.names[i];
-		new_vals[i] = env.values[i];
+	// Unbound: add to the innermost scope via inline (always single after extend1).
+	// Rebuild the innermost scope with the new binding appended.
+	if (env.count == 1) {
+		env.count = 2;
+		env.bindings = mem::talloc_array(Binding, 2);
+		env.bindings[0] = { .name_id = env.inline_name_id, .value = env.inline_value };
+		env.bindings[1] = { .name_id = name_id, .value = v };
+	} else {
+		long old_len = env.bindings.len;
+		Binding[] grown = mem::talloc_array(Binding, old_len + 1);
+		for (int i = 0; i < old_len; i++) grown[i] = env.bindings[i];
+		grown[old_len] = { .name_id = name_id, .value = v };
+		env.bindings = grown;
+		env.count = (uint)(old_len + 1);
 	}
-	new_names[old_len] = name_id;
-	new_vals[old_len] = v;
-	env.names = new_names;
-	env.values = new_vals;
 }
 
 // ============================================================================
@@ -1309,6 +1360,10 @@ fn EvalResult apply_fn(Value fn_val, Value[] args) {
 				.value = mk_str(string::tformat("arity error: expected %d, got %d", c.param_ids.len, args.len))
 			};
 		}
+		if (args.len == 1) {
+			Env* call_env = env_extend1(c.env, c.param_ids[0], args[0]);
+			return eval(c.body, call_env);
+		}
 		Env* call_env = env_extend(c.env, c.param_ids, args);
 		return eval(c.body, call_env);
 	}
@@ -1400,6 +1455,14 @@ fn EvalResult eval(AstNode* node, Env* env) {
 					Closure* c = as_closure(fn_val);
 					int argc = node.children.len - 1;
 					if (argc == c.param_ids.len) {
+						// Ultra-fast path: single-param closure (fib hot path).
+						// Avoids the intermediate Value[] args allocation entirely.
+						if (argc == 1) {
+							EvalResult a = eval(node.children[1], env);
+							if (a.thrown) return a;
+							Env* call_env = env_extend1(c.env, c.param_ids[0], a.value);
+							return eval(c.body, call_env);
+						}
 						Value[] args = mem::talloc_array(Value, argc);
 						for (int i = 0; i < argc; i++) {
 							EvalResult a = eval(node.children[i + 1], env);
@@ -1519,10 +1582,8 @@ fn EvalResult eval(AstNode* node, Env* env) {
 
 		{
 			Record* r = new_record();
-			// Convert each field name (String) into an interned atom (uint).
-			uint[] atoms = mem::talloc_array(uint, node.names.len);
-			for (int i = 0; i < node.names.len; i++) atoms[i] = intern(node.names[i]);
-			r.keys = atoms;
+			// Use pre-interned name_ids from the AST (no runtime intern() call).
+			r.keys = node.name_ids;
 			Value[] vals = mem::talloc_array(Value, node.children.len);
 			for (int i = 0; i < node.children.len; i++) {
 				EvalResult e = eval(node.children[i], env);
@@ -1557,7 +1618,7 @@ fn EvalResult eval(AstNode* node, Env* env) {
 		{
 			EvalResult b = eval(node.children[0], env);
 			if (!b.thrown) return b;
-			Env* h = env_define(env, node.name, b.value);
+			Env* h = env_define(env, node.name_id, b.value);
 			return eval(node.children[1], h);
 		}
 		case PRIM:
@@ -1568,7 +1629,7 @@ fn EvalResult eval(AstNode* node, Env* env) {
 		case LETREC:
 
 		{
-			Env* rec = env_define(env, node.name, mk_nil());
+			Env* rec = env_define(env, node.name_id, mk_nil());
 			// Fast path: if init is a Lambda, create the closure in-place
 			// without going through the full eval(Lambda) → switch dispatch.
 			if (node.children[0].type == LAMBDA) {
@@ -1576,11 +1637,11 @@ fn EvalResult eval(AstNode* node, Env* env) {
 				c.param_ids = node.children[0].name_ids;
 				c.body = node.children[0].children[0];
 				c.env = rec;
-				rec.values[0] = val_closure(c);
+				rec.inline_value = val_closure(c);
 			} else {
 				EvalResult init = eval(node.children[0], rec);
 				if (init.thrown) return init;
-				rec.values[0] = init.value;
+				rec.inline_value = init.value;
 			}
 			return eval(node.children[1], rec);
 		}
@@ -1619,17 +1680,14 @@ fn Env* make_builtin_env()
 		"is_number", "is_string", "is_bool", "is_array", "is_record", "is_nil",
 		"has_field", "len", "push", "print", "array_all", "slice",
 	};
-	uint[] ids = mem::talloc_array(uint, names.len);
-	Value[] values = mem::talloc_array(Value, names.len);
-	for (int i = 0; i < names.len; i++)
-	{
-		ids[i] = intern(names[i]);
-		values[i] = mk_prim(names[i]);
-	}
 	Env* e = mem::tnew(Env);
 	e.parent = null;
-	e.names = ids;
-	e.values = values;
+	e.count = names.len;
+	e.bindings = mem::talloc_array(Binding, names.len);
+	for (int i = 0; i < names.len; i++)
+	{
+		e.bindings[i] = { .name_id = intern(names[i]), .value = mk_prim(names[i]) };
+	}
 	return e;
 }
 
