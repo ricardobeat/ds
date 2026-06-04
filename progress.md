@@ -1,6 +1,6 @@
 # Progress
 
-## Status: Build-order step 1 + step 2 — NaN-boxed Value + interned field atoms (DONE); tree-walker prim inlining (DONE); flat-array Env (DONE)
+## Status: Build-order step 1 + step 2 — NaN-boxed Value + interned field atoms (DONE); tree-walker prim inlining (DONE); flat-array Env (DONE); tree-walker fast-path optimizations (DONE)
 
 Step 2 of the compiler plan (interned field name atoms) is now wired through
 the kernel: every distinct field name is assigned a dense `uint` atom ID by
@@ -27,6 +27,29 @@ string comparison — faster than hash+bucket overhead.  `env_define` creates
 single-entry arrays for LETREC/TRY bindings.
 
 Measured improvement: fib(30) 2.99s → 2.82s (~6% faster on top of prim inlining).
+
+**Tree-walker fast-path optimizations** — three targeted improvements to the
+hottest eval loops:
+
+1. **Inline numeric binops in CALL fast path** — when the CALL handler
+   detects `Call(Prim(op), [a, b])` with both args numbers, it computes the
+   result directly (val_num/val_bool) without calling `prim_dispatch`.  Also
+   inlines unary type-check primitives (`is_number`, `len`, etc.) and
+   `and`/`or`/`===`.  Eliminates string switch dispatch overhead on every
+   arithmetic operation.
+
+2. **Direct VAR→Closure fast path** — when the CALL handler sees
+   `Call(Var("f"), [args])` and "f" resolves to a Closure, it directly
+   creates the call env and evaluates the body, bypassing the general
+   eval→apply_fn dispatch chain.  Saves one eval switch dispatch + one
+   function call per closure invocation.
+
+3. **LetRec Lambda fast path** — when LETREC's init is a Lambda node, the
+   Closure is created in-place without going through eval(Lambda).  Saves one
+   switch dispatch per recursive call for the common `let f = fn(...) {}`
+   pattern.
+
+Measured improvement (Apple M1, O3): fib(30) 0.515s, fib(35) 3.37s.
 
 The full kernel evaluator is in `src/main.c3` (~1400 LoC), the surface
 parser in `src/parser.c3` (~1080 LoC), and the round-trip formatter in
@@ -60,6 +83,8 @@ element, formatter, and vdom test files.
 - Throws carry a value; `try/catch` binds it in a fresh env
 - CLI: `engine run <file.ds>`, `engine fmt <file.ds>`
 - Round-trip formatter (parse + re-emit) with idempotence
+- Release build target (`c3c build release`) for O3 benchmarking
+- Inline numeric binops, direct VAR→Closure calls, LetRec Lambda fast path
 
 ### Element syntax
 

@@ -11,6 +11,11 @@
   "targets": {
     "engine": {
       "type": "executable"
+    },
+    "release": {
+      "type": "executable",
+      "opt": "O3",
+      "strip-unused": true
     }
   },
   "cpu": "generic",

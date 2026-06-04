@@ -1317,7 +1317,65 @@ fn EvalResult eval(AstNode* node, Env* env) {
 					if (a.thrown) return a;
 					stack_buf[i] = a.value;
 				}
-				return prim_dispatch(node.children[0].name, stack_buf[0:argc]);
+				// Ultra-fast path: inline numeric binops without string switch.
+				String pname = node.children[0].name;
+				if (argc == 2) {
+					Value av = stack_buf[0];
+					Value bv = stack_buf[1];
+					if (is_num(av) && is_num(bv)) {
+						double da = as_num(av);
+						double db = as_num(bv);
+						if (pname == "+") return { .value = val_num(da + db) };
+						if (pname == "-") return { .value = val_num(da - db) };
+						if (pname == "*") return { .value = val_num(da * db) };
+						if (pname == "/") {
+							if (db == 0.0) return { .thrown = true, .value = mk_str("division by zero") };
+							return { .value = val_num(da / db) };
+						}
+						if (pname == "<")  return { .value = val_bool(da < db) };
+						if (pname == ">")  return { .value = val_bool(da > db) };
+						if (pname == "<=") return { .value = val_bool(da <= db) };
+						if (pname == ">=") return { .value = val_bool(da >= db) };
+					}
+					if (pname == "===") return { .value = val_bool(strict_eq(av, bv)) };
+					if (pname == "and") return { .value = truthy(av) ? bv : av };
+					if (pname == "or")  return { .value = truthy(av) ? av : bv };
+				}
+				if (argc == 1) {
+					Value av = stack_buf[0];
+					if (pname == "is_number") return { .value = val_bool(is_num(av)) };
+					if (pname == "is_string") return { .value = val_bool(is_str(av)) };
+					if (pname == "is_bool")   return { .value = val_bool(is_bool(av)) };
+					if (pname == "is_array")  return { .value = val_bool(is_arr(av)) };
+					if (pname == "is_record") return { .value = val_bool(is_rec(av)) };
+					if (pname == "is_nil")    return { .value = val_bool(is_nil(av)) };
+					if (pname == "len") {
+						if (is_arr(av)) return { .value = val_num((double)as_arr(av).items.len) };
+						if (is_str(av)) return { .value = val_num((double)(*as_str(av)).len) };
+					}
+				}
+				return prim_dispatch(pname, stack_buf[0:argc]);
+			}
+			// Fast path: direct VAR → Closure call — skip general eval/apply_fn.
+			if (node.children[0].type == VAR) {
+				bool found;
+				Value fn_val = env_lookup(env, node.children[0].name, &found);
+				if (found && is_closure(fn_val)) {
+					Closure* c = as_closure(fn_val);
+					int argc = node.children.len - 1;
+					if (argc == c.params.len) {
+						Value[] args = mem::talloc_array(Value, argc);
+						for (int i = 0; i < argc; i++) {
+							EvalResult a = eval(node.children[i + 1], env);
+							if (a.thrown) return a;
+							args[i] = a.value;
+						}
+						Env* call_env = env_extend(c.env, c.params, args);
+						return eval(c.body, call_env);
+					}
+				}
+				// Fall through: resolve fn_val via general path below if not a direct closure
+				// Reconstruct the function value for the general path.
 			}
 			EvalResult fn_r = eval(node.children[0], env);
 			if (fn_r.thrown) return fn_r;
@@ -1474,11 +1532,20 @@ fn EvalResult eval(AstNode* node, Env* env) {
 		case LETREC:
 
 		{
-			Env* rec        = env_define(env, node.name, mk_nil());
-			EvalResult init = eval(node.children[0], rec);
-			if (init.thrown) return init;
-			// Patch the binding with the actual value so the closure can see itself.
-			rec.values[0] = init.value;
+			Env* rec = env_define(env, node.name, mk_nil());
+			// Fast path: if init is a Lambda, create the closure in-place
+			// without going through the full eval(Lambda) → switch dispatch.
+			if (node.children[0].type == LAMBDA) {
+				Closure* c = new_closure();
+				c.params = node.children[0].names;
+				c.body = node.children[0].children[0];
+				c.env = rec;
+				rec.values[0] = val_closure(c);
+			} else {
+				EvalResult init = eval(node.children[0], rec);
+				if (init.thrown) return init;
+				rec.values[0] = init.value;
+			}
 			return eval(node.children[1], rec);
 		}
 		case SEQ:
