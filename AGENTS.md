@@ -46,6 +46,16 @@ Type annotations on Lambdas are stripped during desugaring and replaced with `If
 
 `===` checks type equality first, then value equality. No `==` coercion operator exists.
 
+### Tail-call optimisation (TCO)
+
+The evaluator uses a trampoline loop: `eval()` wraps `eval_step()` in a `while(true)` loop. Tail call sites (CALL fast paths, IF branches, LETREC body, TRY handler, apply_fn) set an `is_tail` flag and `tail_node`/`tail_env` on `EvalResult` instead of recursing. The loop re-dispatches with zero C stack growth. This makes `sum(1_000_000, 0)` run in constant stack space.
+
+### Reference counting infrastructure
+
+Array, Record, and Closure structs have an intrusive `uint refcount` field. Env also has a refcount. All four are heap-allocated via `mem::new` (not pool-allocated via `mem::tnew`). `rc_inc_val`/`rc_dec_val` and `rc_inc_env`/`rc_dec_env` helpers manage lifetimes. Closures call `rc_inc_env` on their captured env at creation. Env constructors call `rc_inc_env` on the parent.
+
+**Current limitation:** The tree-walker cannot safely free envs during evaluation because envs are shared across multiple `eval()` calls (arg evaluation). The `rc_dec_env` call in the TCO trampoline was removed to avoid use-after-free. Envs accumulate until the top-level `@pool` exits. This will be resolved in the bytecode VM where stack frames have explicit lifetimes.
+
 ### Set is an expression
 
 `Set` returns the value being assigned, like Rust. Loops-for-effect return `Nil`.

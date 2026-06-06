@@ -3,8 +3,7 @@
 Comparison against [Wren](https://wren.io/) (v0.4.0, bytecode VM) and
 [QuickJS](https://github.com/quickjs-ng/quickjs) (v0.15.0, bytecode VM) across
 a fib(35) microbenchmark.  The DS engine is a tree-walking interpreter with a
-pool allocator and no tail-call optimisation — these results are a **baseline**
-for the planned bytecode compiler (step **G**).
+pool allocator and tail-call optimisation (TCO trampoline).
 
 ## Environment
 
