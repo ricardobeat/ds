@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-ENGINE="$(dirname "$0")/../build/engine"
+ENGINE="${DS_ENGINE:-$(dirname "$0")/../build/release}"
 WREN="${WREN_CLI:-$(command -v wren_cli 2>/dev/null || echo /opt/homebrew/bin/wren_cli)}"
 QJS="${QJS_BIN:-$(command -v qjs 2>/dev/null || echo /opt/homebrew/bin/qjs)}"
 
@@ -133,7 +133,7 @@ print_header
 # ── fib(N) tree-recursive ─────────────────────────────────────────
 
 print_section "fib(N) tree-recursive"
-for n in 20 25 30 35; do
+for n in 20 25 30; do
   cat > "$BENCHDIR/fib.ds" <<EOF
 let f = fn(n) { if n < 2 then n else f(n - 1) + f(n - 2) };
 f($n)
