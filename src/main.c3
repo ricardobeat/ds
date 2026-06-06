@@ -240,6 +240,7 @@ fn String atom_name(uint id) {
 // ============================================================================
 
 struct Array {
+	uint refcount;
 	Value[] items;
 }
 
@@ -255,6 +256,7 @@ struct Record {
 }
 
 struct Closure {
+	uint refcount;
 	uint[] param_ids;
 	AstNode* body;
 	Env* env;
@@ -348,6 +350,7 @@ union EnvData {
 
 struct Env {
 	Env* parent;
+	uint refcount;
 	uint count;
 	uint name_id;
 	EnvData data;
@@ -363,6 +366,9 @@ struct Env {
 struct EvalResult {
 	bool thrown;
 	Value value;
+	bool is_tail;
+	AstNode* tail_node;
+	Env* tail_env;
 }
 
 // ============================================================================
@@ -392,9 +398,21 @@ fn Value mk_prim(String n) {
 	return val_prim(p);
 }
 
-fn Array* new_array() => mem::tnew(Array);
-fn Record* new_record() => mem::tnew(Record);
-fn Closure* new_closure() => mem::tnew(Closure);
+fn Array* new_array() {
+	Array* a = mem::new(Array);
+	a.refcount = 1;
+	return a;
+}
+fn Record* new_record() {
+	Record* r = mem::new(Record);
+	r.refcount = 1;
+	return r;
+}
+fn Closure* new_closure() {
+	Closure* c = mem::new(Closure);
+	c.refcount = 1;
+	return c;
+}
 fn Prim* new_prim(String n) {
 	Prim* p = mem::tnew(Prim);
 	p.name = n;
@@ -742,9 +760,62 @@ fn Value show(Value v) {
 // ENV HELPERS
 // ============================================================================
 
+// --- Reference counting for heap-allocated objects ---
+
+fn void rc_inc_env(Env* e) {
+	if (e != null) e.refcount++;
+}
+
+fn void rc_dec_env(Env* e) {
+	if (e == null) return;
+	e.refcount--;
+	if (e.refcount == 0) {
+		// rc_dec bindings
+		if (e.count == 1 && !(e.count & CLOSURE_BIT)) {
+			rc_dec_val(e.data.value);
+		} else if (e.count > 1 && !(e.count & CLOSURE_BIT)) {
+			Binding* bp = e.data.bindings_ptr;
+			for (uint i = 0; i < e.count; i++) {
+				rc_dec_val(bp[i].value);
+			}
+		}
+		rc_dec_env(e.parent);
+		mem::free(e);
+	}
+}
+
+fn void rc_inc_val(Value v) {
+	if (is_arr(v)) {
+		as_arr(v).refcount++;
+	} else if (is_rec(v)) {
+		as_rec(v).refcount++;
+	} else if (is_closure(v)) {
+		as_closure(v).refcount++;
+	}
+}
+
+fn void rc_dec_val(Value v) {
+	if (is_arr(v)) {
+		Array* a = as_arr(v);
+		a.refcount--;
+		if (a.refcount == 0) mem::free(a);
+	} else if (is_rec(v)) {
+		Record* r = as_rec(v);
+		r.refcount--;
+		if (r.refcount == 0) mem::free(r);
+	} else if (is_closure(v)) {
+		Closure* c = as_closure(v);
+		c.refcount--;
+		if (c.refcount == 0) {
+			rc_dec_env(c.env);
+			mem::free(c);
+		}
+	}
+}
+
 // Single-param fast path: zero array allocations for the hot fib/closure case.
 fn Env* env_extend1(Env* parent, uint name_id, Value value) {
-	Env* e = mem::tnew(Env);
+	Env* e = mem::new(Env);
 	e.parent = parent;
 	e.count = 1;
 	e.name_id = name_id;
@@ -755,7 +826,7 @@ fn Env* env_extend1(Env* parent, uint name_id, Value value) {
 // Multi-param path: wraps caller-provided arrays into a Binding[].
 fn Env* env_extend(Env* parent, uint[] name_ids, Value[] values) {
 	int n = name_ids.len;
-	Env* e = mem::tnew(Env);
+	Env* e = mem::new(Env);
 	e.parent = parent;
 	if (n == 1) {
 		e.count = 1;
@@ -774,7 +845,7 @@ fn Env* env_extend(Env* parent, uint[] name_ids, Value[] values) {
 
 // Single-binding define (LETREC, TRY catch): inline, no array alloc.
 fn Env* env_define(Env* parent, uint name_id, Value v) {
-	Env* e = mem::tnew(Env);
+	Env* e = mem::new(Env);
 	e.parent = parent;
 	e.count = 1;
 	e.name_id = name_id;
@@ -788,7 +859,7 @@ fn Env* env_define(Env* parent, uint name_id, Value v) {
 // closure envs).  The CALL fast path detects `count & CLOSURE_BIT` and
 // calls the closure directly, avoiding a separate Closure heap alloc.
 fn Env* env_define_closure(Env* parent, uint name_id, AstNode* lambda_node) {
-	Env* e = mem::tnew(Env);
+	Env* e = mem::new(Env);
 	e.parent = parent;
 	e.count = 1 | CLOSURE_BIT;
 	e.name_id = name_id;
@@ -1387,10 +1458,10 @@ fn EvalResult apply_fn(Value fn_val, Value[] args) {
 		}
 		if (args.len == 1) {
 			Env* call_env = env_extend1(c.env, c.param_ids[0], args[0]);
-			return eval(c.body, call_env);
+			return { .is_tail = true, .tail_node = c.body, .tail_env = call_env };
 		}
 		Env* call_env = env_extend(c.env, c.param_ids, args);
-		return eval(c.body, call_env);
+		return { .is_tail = true, .tail_node = c.body, .tail_env = call_env };
 	}
 	return { .thrown = true, .value = mk_str("not callable") };
 }
@@ -1399,7 +1470,38 @@ fn EvalResult apply_fn(Value fn_val, Value[] args) {
 // EVAL
 // ============================================================================
 
+// TCO trampoline: loop instead of recursing so tail calls use constant C stack.
+// Flat hot path: inlines single-param CALL(VAR→CLOSURE_BIT) to skip eval_step.
 fn EvalResult eval(AstNode* node, Env* env) {
+	while (true) {
+		// --- Flat hot path: single-param tail call via CLOSURE_BIT ---
+		if (node.type == CALL && node.children[0].type == VAR) {
+			bool found;
+			Env* source;
+			env_lookup(env, node.children[0].name_id, &found, &source);
+			if (found && source != null && (source.count & CLOSURE_BIT)) {
+				AstNode* lambda = source.data.lambda_node;
+				int argc = node.children.len - 1;
+				if (argc == lambda.name_ids.len) {
+					if (argc == 1) {
+						EvalResult a = eval(node.children[1], env);
+						if (a.thrown) return a;
+						env = env_extend1(source, lambda.name_ids[0], a.value);
+						node = lambda.children[0];
+						continue;
+					}
+				}
+			}
+		}
+		// --- Slow path ---
+		EvalResult r = eval_step(node, env);
+		if (!r.is_tail) return r;
+		node = r.tail_node;
+		env = r.tail_env;
+	}
+}
+
+fn EvalResult eval_step(AstNode* node, Env* env) {
 	switch (node.type) {
 		case LIT:
 			return { .value = node.literal };
@@ -1416,6 +1518,7 @@ fn EvalResult eval(AstNode* node, Env* env) {
 			if (source != null && (source.count & CLOSURE_BIT)) {
 				AstNode* lambda = source.data.lambda_node;
 				Closure* c = new_closure();
+						rc_inc_env(source);
 				c.param_ids = lambda.name_ids;
 				c.body = lambda.children[0];
 				c.env = source;
@@ -1426,6 +1529,7 @@ fn EvalResult eval(AstNode* node, Env* env) {
 
 		{
 			Closure* c = new_closure();
+			rc_inc_env(env);
 			c.param_ids = node.name_ids;
 			c.body = node.children[0];
 			c.env = env;
@@ -1500,7 +1604,7 @@ fn EvalResult eval(AstNode* node, Env* env) {
 								EvalResult a = eval(node.children[1], env);
 								if (a.thrown) return a;
 								Env* call_env = env_extend1(source, lambda.name_ids[0], a.value);
-								return eval(lambda.children[0], call_env);
+								return { .is_tail = true, .tail_node = lambda.children[0], .tail_env = call_env };
 							}
 							Value[8] stack_buf;
 							for (int i = 0; i < argc; i++) {
@@ -1509,7 +1613,7 @@ fn EvalResult eval(AstNode* node, Env* env) {
 								stack_buf[i] = a.value;
 							}
 							Env* call_env = env_extend(source, lambda.name_ids, stack_buf[0:argc]);
-							return eval(lambda.children[0], call_env);
+							return { .is_tail = true, .tail_node = lambda.children[0], .tail_env = call_env };
 						}
 					}
 					// Normal Closure path — skip general eval/apply_fn.
@@ -1523,7 +1627,7 @@ fn EvalResult eval(AstNode* node, Env* env) {
 								EvalResult a = eval(node.children[1], env);
 								if (a.thrown) return a;
 								Env* call_env = env_extend1(c.env, c.param_ids[0], a.value);
-								return eval(c.body, call_env);
+								return { .is_tail = true, .tail_node = c.body, .tail_env = call_env };
 							}
 							Value[] args = mem::talloc_array(Value, argc);
 							for (int i = 0; i < argc; i++) {
@@ -1532,7 +1636,7 @@ fn EvalResult eval(AstNode* node, Env* env) {
 								args[i] = a.value;
 							}
 							Env* call_env = env_extend(c.env, c.param_ids, args);
-							return eval(c.body, call_env);
+							return { .is_tail = true, .tail_node = c.body, .tail_env = call_env };
 						}
 					}
 				}
@@ -1556,8 +1660,8 @@ fn EvalResult eval(AstNode* node, Env* env) {
 		{
 			EvalResult c = eval(node.children[0], env);
 			if (c.thrown) return c;
-			if (truthy(c.value)) return eval(node.children[1], env);
-			return eval(node.children[2], env);
+			if (truthy(c.value)) return { .is_tail = true, .tail_node = node.children[1], .tail_env = env };
+			return { .is_tail = true, .tail_node = node.children[2], .tail_env = env };
 		}
 		case GET:
 
@@ -1682,7 +1786,7 @@ fn EvalResult eval(AstNode* node, Env* env) {
 			EvalResult b = eval(node.children[0], env);
 			if (!b.thrown) return b;
 			Env* h = env_define(env, node.name_id, b.value);
-			return eval(node.children[1], h);
+			return { .is_tail = true, .tail_node = node.children[1], .tail_env = h };
 		}
 		case PRIM:
 
@@ -1696,13 +1800,13 @@ fn EvalResult eval(AstNode* node, Env* env) {
 			// — no separate Closure heap allocation needed.
 			if (node.children[0].type == LAMBDA) {
 				Env* rec = env_define_closure(env, node.name_id, node.children[0]);
-				return eval(node.children[1], rec);
+				return { .is_tail = true, .tail_node = node.children[1], .tail_env = rec };
 			}
 			Env* rec = env_define(env, node.name_id, mk_nil());
 			EvalResult init = eval(node.children[0], rec);
 			if (init.thrown) return init;
 			rec.data.value = init.value;
-			return eval(node.children[1], rec);
+			return { .is_tail = true, .tail_node = node.children[1], .tail_env = rec };
 		}
 		case SEQ:
 		case BINOP:
