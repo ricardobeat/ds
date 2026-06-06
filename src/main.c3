@@ -1174,7 +1174,6 @@ fn AstNode* type_pred(Type t, AstNode* val, TypeDefEntry* tenv) {
 				return make_if(make_call(make_prim_node("is_record"), { val }), result, make_lit(mk_bool(false)));
 			}
 	}
-	return make_lit(mk_bool(true));
 }
 
 // make_check: wrap an already-desugared kernel expression `expr_kernel` so
@@ -1225,7 +1224,6 @@ fn String type_name(Type t) {
 				};
 			}
 	}
-	return "?";
 }
 
 fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
@@ -1437,7 +1435,6 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 				return make_call(make_lambda({ s }, chain), { scrut });
 			}
 	}
-	return e;
 }
 
 // ============================================================================
@@ -1818,7 +1815,6 @@ fn EvalResult eval_step(AstNode* node, Env* env) {
 		case MATCH:
 			return { .thrown = true, .value = mk_str("eval: surface node reached the kernel; desugar first") };
 	}
-	return { .thrown = true, .value = mk_str("unknown node") };
 }
 
 // ============================================================================

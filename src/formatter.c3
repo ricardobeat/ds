@@ -204,7 +204,6 @@ fn long fmt_estimate_width(AstNode* e)
 		case SEQ:
 			return 100; // "big" — these are formatted multi-line anyway
 	}
-	return 0;
 }
 
 // ---------------------------------------------------------------------------
