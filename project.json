@@ -14,10 +14,14 @@
     },
     "release": {
       "type": "executable",
-      "opt": "O3",
+      "opt": "Os",
+      "optsize": "tiny",
+      "optlevel": "more",
+      "memory-env": "tiny",
+      "fp-math": "relaxed",
       "strip-unused": true
     }
   },
   "cpu": "generic",
-  "opt": "O0"
+  "opt": "O2"
 }
