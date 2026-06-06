@@ -153,8 +153,8 @@ EOF
 
   base="fib($n)"
   run_one "$base QJS"   "$base" js   "$BENCHDIR/fib.js"
-  run_one "$base DS"    "$base" ds   "$BENCHDIR/fib.ds"
   run_one "$base Wren"  "$base" wren "$BENCHDIR/fib.wren"
+  run_one "$base DS"    "$base" ds   "$BENCHDIR/fib.ds"
 done
 
 # ── sum(N) tail-recursive ─────────────────────────────────────────
@@ -181,8 +181,8 @@ EOF
 
   base="sum($n)"
   run_one "$base QJS"   "$base" js   "$BENCHDIR/sum.js"
-  run_one "$base DS"    "$base" ds   "$BENCHDIR/sum.ds"
   run_one "$base Wren"  "$base" wren "$BENCHDIR/sum.wren"
+  run_one "$base DS"    "$base" ds   "$BENCHDIR/sum.ds"
 done
 
 # ── record field tail-recursive ───────────────────────────────────
@@ -209,8 +209,8 @@ EOF
 
   base="rec($n)"
   run_one "$base QJS"   "$base" js   "$BENCHDIR/rec.js"
-  run_one "$base DS"    "$base" ds   "$BENCHDIR/rec.ds"
   run_one "$base Wren"  "$base" wren "$BENCHDIR/rec.wren"
+  run_one "$base DS"    "$base" ds   "$BENCHDIR/rec.ds"
 done
 
 printf '%s\n' "$BOT"
