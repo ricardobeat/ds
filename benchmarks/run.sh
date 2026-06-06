@@ -100,7 +100,7 @@ run_one() {
   local label="$1" base="$2" lang="$3" file="$4"
   local cmd
   case "$lang" in
-    ds)   cmd="$ENGINE run $file" ;;
+    ds)   cmd="$ENGINE vm $file" ;;
     wren) cmd="$WREN $file" ;;
     js)   cmd="$QJS $file" ;;
   esac

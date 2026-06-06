@@ -1881,6 +1881,36 @@ fn Value run_source(String src)
 	};
 }
 
+// VM-based runner: compile to bytecode, then execute in the VM.
+fn Value run_vm(Chunk* chunk) {
+	@pool() {
+		EvalResult r = vm_execute(chunk);
+		if (r.thrown) {
+			Value s = show(r.value);
+			io::printfn("threw: %s", *as_str(s));
+			return mk_nil();
+		}
+		Value s = show(r.value);
+		io::printn(*as_str(s));
+		return r.value;
+	};
+}
+
+fn Value run_source_vm(String src)
+{
+	@pool() {
+		ParseResult pr = parse_source(src);
+		if (pr.error)
+		{
+			io::printfn("%s", pr.message);
+			return mk_nil();
+		}
+		AstNode* kernel = desugar(pr.root, null);
+		Chunk* chunk = compile(kernel);
+		return run_vm(chunk);
+	};
+}
+
 fn int main(String[] args) {
 	intern_init();
 	builtin_env = make_builtin_env();
@@ -1927,6 +1957,22 @@ fn int main(String[] args) {
 			return 1;
 		}
 		run_source((String)contents);
+		return 0;
+	}
+	if (args[1] == "vm")
+	{
+		if (args.len < 3)
+		{
+			io::printn("usage: engine vm <file.ds>");
+			return 1;
+		}
+		char[]? contents = file::load_temp(args[2]);
+		if (catch err = contents)
+		{
+			io::printfn("error: could not read %s", args[2]);
+			return 1;
+		}
+		run_source_vm((String)contents);
 		return 0;
 	}
 	// Default: treat args[1] as a script to run (backwards-compatible).

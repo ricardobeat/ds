@@ -271,6 +271,107 @@ followed by `/` (the element closing tag).
 - [x] J. JSX-like element syntax
 - [x] K. Interned field-name atoms (Step 2) — `Record.keys` is `uint[]`,
        `g_intern` is the global name-to-atom table
-- [ ] G. Bytecode compiler + VM (upvalue closing, TAILCALL, refcounting)
+- [~] G. Bytecode compiler + VM (inline prim opcodes, GET_FIELD/SET_FIELD,
+      short-circuit and/or, rc wiring — done. Remaining: rc perf optimization,
+      POP/opcode-level rc, remove tree-walker)
 - [x] L. Parse-time intern of every literal field name and variable name —
       `name_id`/`name_ids` on all AST nodes, `Env.names` is `uint[]`
+
+## Bytecode VM — Phase 2: Performance & Completeness
+
+Baseline → Final (Apple M1, O3, fib(30)):
+
+| Metric | Tree-walker | VM start | +inline ops | +fused ops | QJS | Wren |
+|--------|------------|----------|-------------|------------|-----|------|
+| fib(30) | 0.22s / 84MB | 0.14s / 1.5MB | 0.09s / 1.5MB | **0.072s / 1.5MB** | 0.054s / 2.3MB | 0.096s / 2.0MB |
+| vs tree | 1× | 1.6× | 2.4× | **3.1×** | 4.1× | 2.3× |
+| vs QJS | 4.1× | 2.6× | 1.7× | **1.3×** | 1× | 1.8× |
+
+DS now **beats Wren** on fib(30) and ties QJS on fib(20). Memory is
+consistently 1.5 MB regardless of recursion depth.
+
+### Fix 1 — Inline arithmetic/comparison opcodes (DONE)
+
+The compiler currently emits `PUSH_CONST <Prim("+")> + args + CALL` for every
+arithmetic/comparison operation, sending them through `call_builtin` →
+`prim_dispatch` → string switch.  The VM already has dedicated opcodes
+(`ADD`, `SUB`, `MUL`, `DIV`, `LT`, `GT`, `LE`, `GE`, `EQ`) that do the same
+work in a single stack operation with zero function calls.
+
+Fix: in the compiler's CALL case, detect when the callee is a PRIM node with
+an inlineable name and emit args + the dedicated opcode instead.
+
+Result: fib(30) 0.14s → 0.08s (1.75× faster). Now 2.75× faster than tree-walker.
+
+### Fix 2 — Guard close_upvalues_above (DONE)
+
+Both CALL and RETURN call `close_upvalues_above` unconditionally, doing a
+linear scan of the upvalue pool even when there are zero open upvalues.
+Fix: guard with `if (vm.open_count > 0)`.
+
+Result: no measurable speed change for fib(30) (no upvalues in fib), but
+correctly avoids 10M+ pointless scans in programs with no closures.
+
+### Fix 3 — Implement GET_FIELD/SET_FIELD opcodes (DONE)
+
+GET_FIELD/SET_FIELD are defined but throw "not implemented".  Implement them
+to look up/set record fields by atom ID directly, and have the compiler emit
+them for literal field access.
+
+Result: record field access now uses GET_FIELD with inline atom (2 bytes:
+opcode + atom) instead of PUSH_CONST + GET_INDEX (4 bytes).  sample.ds and
+all 94 tests pass.
+
+### Fix 4 — Wire reference counting (DONE, partial)
+
+VmClosure.refcount was set but never managed.  Added:
+- `vm_rc_inc_val` / `vm_rc_dec_val` — VM-aware decrement that handles
+  VmClosure (different layout than tree-walker Closure: upvals vs env).
+- `rc_inc` on LOAD_LOCAL, `rc_dec` on POP, `rc_inc`/`rc_dec` on STORE_LOCAL,
+  `rc_dec` on RETURN frame locals, `rc_inc` in close_upvalues_above.
+- VmClosure freed when refcount hits 0 (frees upvals pointer array + struct).
+- Record/Array freed when refcount hits 0 (frees keys/values/items arrays + struct).
+
+All 94 tests pass, sample.ds works.
+
+Speed regression initially: 0.08s → 0.11s due to rc calls on every
+LOAD_LOCAL/POP.  Fixed by adding `@inline` + early return for numbers/bools/nil
+(is_num || is_nil || is_bool → return immediately).  Final: 0.09s (within
+noise of the 0.08s pre-rc baseline).
+
+### Fix 5 — Short-circuit and/or (DONE)
+
+`and`/`or` previously went through CALL + prim_dispatch, evaluating both
+operands eagerly.  Now compiled as short-circuit patterns:
+- `and`: compile left, JUMP_IF_FALSE past right (keep left), POP, compile right
+- `or`: compile left, JUMP_IF_TRUE past right (keep left), POP, compile right
+
+Added `JUMP_IF_TRUE` opcode to chunk.c3 and vm.c3.
+
+Result: correct short-circuit semantics, no performance impact on fib (which
+doesn't use and/or).
+
+### Fused opcodes (DONE)
+
+Three fused opcodes target the fib hot path:
+
+1. **LOAD_LOCAL_LT_CONST** `[slot, const_idx]` — load local, compare with
+   constant, push bool.  Replaces LOAD_LOCAL + PUSH_CONST + LT (3 dispatches → 1).
+   Used for `if n < 2`.
+
+2. **LOAD_LOCAL_SUB_CONST** `[slot, const_idx]` — load local, subtract constant,
+   push result.  Replaces LOAD_LOCAL + PUSH_CONST + SUB (3 dispatches → 1).
+   Used for `n - 1`, `n - 2`.
+
+3. **LOAD_FCALL** `[slot, argc]` — load closure from local slot, immediately
+   call.  Replaces LOAD_LOCAL + CALL (2 dispatches → 1).  Does not push fn
+   onto the stack — reads it from the local slot and dispatches directly.
+
+4. **TAILCALL_LOCAL** `[slot, argc]` — same as LOAD_FCALL but reuses the
+   current frame (TCO).
+
+Compiler emits these automatically when it detects `VAR(local) < LIT(num)`,
+`VAR(local) - LIT(num)`, or `Call(Var(local), args)` patterns.
+
+Result: fib(30) 0.09s → 0.072s.  Now faster than Wren and only 1.3× slower
+than QJS.
