@@ -1338,6 +1338,12 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 			if (is_str(args[0]) && is_str(args[1])) {
 				return { .value = mk_str((*as_str(args[0])).tconcat(*as_str(args[1]))) };
 			}
+			// Mixed string+number: coerce via show()
+			if (is_str(args[0]) || is_str(args[1])) {
+				Value s0 = is_str(args[0]) ? args[0] : show(args[0]);
+				Value s1 = is_str(args[1]) ? args[1] : show(args[1]);
+				return { .value = mk_str((*as_str(s0)).tconcat(*as_str(s1))) };
+			}
 			return { .thrown = true, .value = mk_str("type error: + expects number or string") };
 		case "-":
 			if (!is_num(args[0]) || !is_num(args[1])) {
@@ -1479,7 +1485,7 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 		{
 			// signal_get(signal_or_derived) => current value
 			if (!is_signal(args[0])) {
-				return { .thrown = true, .value = mk_str("type error: signal_get expects signal or derived") };
+				return { .thrown = true, .value = mk_str("$: not a signal — did a local variable shadow the signal?") };
 			}
 			Signal* sig = as_signal(args[0]);
 			reactive_track(sig);

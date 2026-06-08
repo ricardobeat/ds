@@ -308,3 +308,49 @@ fn void test_block_expr_nested_blocks() @test
 	Value v = run_parsed("{ let x = { 10 }; let y = { 20 }; x + y }");
 	assert(as_num(v) == 30.0);
 }
+
+// ============================================================================
+// $ signal sugar
+// ============================================================================
+
+fn void test_signal_sugar_let_init() @test
+{
+	// let $x = 10  →  let x = signal(10)
+	Value v = run_parsed("let $x = 10; $x");
+	assert(as_num(v) == 10.0);
+}
+
+fn void test_signal_sugar_set() @test
+{
+	// $x = 42  →  signal_set(x, 42)  →  returns 42
+	Value v = run_parsed("let $x = 10; $x = 42; $x");
+	assert(as_num(v) == 42.0);
+}
+
+fn void test_signal_sugar_multiple() @test
+{
+	Value v = run_parsed("let $a = 1; let $b = 2; $a + $b");
+	assert(as_num(v) == 3.0);
+}
+
+// ============================================================================
+// from...import
+// ============================================================================
+
+fn void test_from_import_single() @test
+{
+	Value v = run_parsed("from signals import { get }; let $x = 99; get(x)");
+	assert(as_num(v) == 99.0);
+}
+
+fn void test_from_import_multiple() @test
+{
+	Value v = run_parsed("from signals import { get, set }; let $x = 10; set(x, 20); get(x)");
+	assert(as_num(v) == 20.0);
+}
+
+fn void test_from_import_with_sugar() @test
+{
+	Value v = run_parsed("from signals import { get }; let $score = 5; $score = 15; get(score)");
+	assert(as_num(v) == 15.0);
+}

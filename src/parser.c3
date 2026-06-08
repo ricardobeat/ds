@@ -18,6 +18,8 @@ enum TokKind : char
 	TK_KW_TRUE, TK_KW_FALSE, TK_KW_NIL,
 	TK_KW_THROW, TK_KW_TRY, TK_KW_CATCH,
 	TK_KW_TYPE, TK_KW_MATCH,
+	TK_DOLLAR,
+	TK_KW_FROM, TK_KW_IMPORT,
 }
 
 struct Token
@@ -199,8 +201,22 @@ fn Token lex_ident(Lexer* l, long start_line, long start_col)
 	else if (text == "match") { t.kind = TK_KW_MATCH; }
 	else if (text == "and") { t.kind = TK_AND; }
 	else if (text == "or") { t.kind = TK_OR; }
+	else if (text == "from") { t.kind = TK_KW_FROM; }
+	else if (text == "import") { t.kind = TK_KW_IMPORT; }
 	else { t.kind = TK_IDENT; }
 	return t;
+}
+
+// Module import resolution: maps (module, local_name) → primitive name.
+fn String resolve_module_import(String mod, String name) {
+	if (mod == "signals") {
+		if (name == "get") return "signal_get";
+		if (name == "set") return "signal_set";
+		if (name == "signal") return "signal";
+		if (name == "derived") return "derived";
+		if (name == "effect") return "effect";
+	}
+	return name; // unknown module: return as-is
 }
 
 fn Token lex_one(Lexer* l, long start_line, long start_col)
@@ -238,6 +254,7 @@ fn Token lex_one(Lexer* l, long start_line, long start_col)
 	}
 	if (c == '*') { t.kind = TK_STAR; t.text = "*"; l.pos++; return t; }
 	if (c == '/') { t.kind = TK_SLASH; t.text = "/"; l.pos++; return t; }
+	if (c == '$') { t.kind = TK_DOLLAR; t.text = "$"; l.pos++; return t; }
 	if (c == '!')
 	{
 		if (l.pos + 1 < l.src.len && l.src[l.pos + 1] == '=' && l.pos + 2 < l.src.len && l.src[l.pos + 2] == '=')
@@ -1077,6 +1094,24 @@ fn AstNode* parse_primary(Parser* p)
 		case TK_IDENT:
 			parser_advance(p);
 			return make_var(t.text);
+		case TK_DOLLAR:
+			parser_advance(p);
+			if (!parser_check(p, TK_IDENT))
+			{
+				parser_set_error(p, "expected variable name after '$'");
+				return make_lit(mk_nil());
+			}
+			String sig_name = parser_cur(p).text;
+			parser_advance(p);
+			// $x = expr  →  signal_set(x, expr)
+			if (parser_accept(p, TK_EQ))
+			{
+				AstNode* val = parse_or(p);
+				if (p.error) return val;
+				return make_call(make_var("signal_set"), { make_var(sig_name), val });
+			}
+			// $x  →  signal_get(x)
+			return make_call(make_var("signal_get"), { make_var(sig_name) });
 		case TK_LPAREN:
 			parser_advance(p);
 			AstNode* e = parse_or(p);
@@ -1238,6 +1273,27 @@ fn AstNode* parse_toplevel(Parser* p)
 	if (parser_check(p, TK_KW_LET))
 	{
 		parser_advance(p);
+		// let $x = expr  →  let x = signal(expr)
+		if (parser_accept(p, TK_DOLLAR))
+		{
+			if (!parser_check(p, TK_IDENT))
+			{
+				parser_set_error(p, "expected name after 'let $'");
+				return make_lit(mk_nil());
+			}
+			String name = parser_cur(p).text;
+			parser_advance(p);
+			if (!parser_accept(p, TK_EQ))
+			{
+				parser_set_error(p, "expected '=' in let $");
+				return make_lit(mk_nil());
+			}
+			AstNode* init = parse_or(p);
+			if (p.error) return init;
+			parser_accept(p, TK_SEMI);
+			AstNode* sig_init = make_call(make_var("signal"), { init });
+			return make_letrec(name, sig_init, make_lit(mk_nil()));
+		}
 		if (!parser_check(p, TK_IDENT))
 		{
 			parser_set_error(p, "expected name after 'let'");
@@ -1277,6 +1333,57 @@ fn AstNode* parse_toplevel(Parser* p)
 		parser_accept(p, TK_SEMI);
 		AstNode* body = make_lit(mk_nil());
 		return make_letrec(name, lambda, body);
+	}
+	// from MODULE import { name, name, ... }
+	if (parser_check(p, TK_KW_FROM))
+	{
+		parser_advance(p);
+		if (!parser_check(p, TK_IDENT))
+		{
+			parser_set_error(p, "expected module name after 'from'");
+			return make_lit(mk_nil());
+		}
+		String mod = parser_cur(p).text;
+		parser_advance(p);
+		if (!parser_accept(p, TK_KW_IMPORT))
+		{
+			parser_set_error(p, "expected 'import' after module name");
+			return make_lit(mk_nil());
+		}
+		if (!parser_accept(p, TK_LBRACE))
+		{
+			parser_set_error(p, "expected '{' after 'import'");
+			return make_lit(mk_nil());
+		}
+		// Collect imported names.
+		String[16] names_buf;
+		int nn = 0;
+		while (!parser_check(p, TK_RBRACE) && !parser_check(p, TK_EOF))
+		{
+			if (!parser_check(p, TK_IDENT))
+			{
+				parser_set_error(p, "expected name in import list");
+				return make_lit(mk_nil());
+			}
+			names_buf[nn++] = parser_cur(p).text;
+			parser_advance(p);
+			parser_accept(p, TK_COMMA);
+		}
+		if (!parser_accept(p, TK_RBRACE))
+		{
+			parser_set_error(p, "expected '}' to close import list");
+			return make_lit(mk_nil());
+		}
+		parser_accept(p, TK_SEMI);
+		// Build nested letrec bindings: let get = signal_get; let set = signal_set; ...
+		// The module table maps (module, local_name) → primitive_name.
+		AstNode* body = make_lit(mk_nil());
+		for (int i = nn - 1; i >= 0; i--)
+		{
+			String prim = resolve_module_import(mod, names_buf[i]);
+			body = make_letrec(names_buf[i], make_lit(mk_prim(prim)), body);
+		}
+		return body;
 	}
 	AstNode* e = parse_or(p);
 	parser_accept(p, TK_SEMI);
@@ -1349,9 +1456,15 @@ fn AstNode* parse_program(Parser* p)
 	{
 		AstNode* item = items[i];
 		// If `item` is a LetRec, take its name + init and rewrap with `body`.
+		// Flatten nested LetRec chains (from from...import).
 		if (item.type == LETREC)
 		{
-			body = make_letrec(item.name, item.children[0], body);
+			AstNode* chain = item;
+			while (chain.type == LETREC)
+			{
+				body = make_letrec(chain.name, chain.children[0], body);
+				chain = chain.children[1];
+			}
 		}
 		else if (item.type == LET_T)
 		{
