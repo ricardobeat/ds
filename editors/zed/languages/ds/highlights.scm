@@ -11,6 +11,9 @@
 "try" @keyword
 "catch" @keyword
 "match" @keyword
+"from" @keyword.import
+"import" @keyword.import
+"type" @keyword
 
 ; ── Literals ──────────────────────────────────────────────────
 (string) @string
@@ -37,6 +40,15 @@
 ; ── Logical keywords used as operators ────────────────────────
 "and" @keyword.operator
 "or" @keyword.operator
+
+; ── Signal sugar ──────────────────────────────────────────────
+"$" @punctuation.special
+
+(signal_read
+  name: (identifier) @variable)
+
+(signal_write
+  name: (identifier) @variable)
 
 ; ── Punctuation ───────────────────────────────────────────────
 "(" @punctuation.bracket
@@ -77,6 +89,17 @@
 (let_declaration
   name: (identifier) @variable)
 
+; ── Import bindings ───────────────────────────────────────────
+(import_declaration
+  module: (identifier) @module)
+
+(import_declaration
+  (identifier) @variable)
+
+; ── Type declarations ─────────────────────────────────────────
+(type_declaration
+  name: (identifier) @type)
+
 ; ── Match ─────────────────────────────────────────────────────
 (match_arm
   tag: (upper_identifier) @constructor)
@@ -106,6 +129,9 @@
 (type_record
   (type_field
     (identifier) @property))
+
+(type_sum
+  (type_name) @type)
 
 (parameter
   type: (type_name) @type)

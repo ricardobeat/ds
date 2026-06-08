@@ -1173,12 +1173,24 @@ fn int api_register_fn(char* name, void* c_fn) {
 	return ok ? 1 : 0;
 }
 
+// Platform-specific shared library extension.
+// On Linux: const String SHARED_LIB_EXT = ".so";
+// On Windows: const String SHARED_LIB_EXT = ".dll";
+const String SHARED_LIB_EXT = ".dylib";
+
 fn EvalResult loadlib_fn(Value[] args) {
 	if (!is_str(args[0])) {
 		return { .thrown = true, .value = mk_str("loadlib expects a string path") };
 	}
 	char* path = as_str(args[0]).ptr;
 	void* handle = dlopen(path, RTLD_NOW);
+	if (handle == null) {
+		// Try with platform-specific extension
+		DString buf; buf.tinit();
+		buf.append(*as_str(args[0]));
+		buf.append(SHARED_LIB_EXT);
+		handle = dlopen(buf.str_view().ptr, RTLD_NOW);
+	}
 	if (handle == null) {
 		return { .thrown = true, .value = mk_str("loadlib: failed to open library") };
 	}

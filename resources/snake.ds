@@ -5,7 +5,7 @@
 
 // --- Load terminal plugin ---
 
-loadlib("build/libterm.dylib")
+from "./build/libterm" import *
 from signals import { signal, derived }
 
 let ROWS = 20

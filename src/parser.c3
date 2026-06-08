@@ -1338,6 +1338,24 @@ fn AstNode* parse_toplevel(Parser* p)
 	if (parser_check(p, TK_KW_FROM))
 	{
 		parser_advance(p);
+		// from "path" import *  →  loadlib("path")  (dynamic library)
+		if (parser_check(p, TK_STR))
+		{
+			String path = parser_cur(p).text;
+			parser_advance(p);
+			if (!parser_accept(p, TK_KW_IMPORT))
+			{
+				parser_set_error(p, "expected 'import' after library path");
+				return make_lit(mk_nil());
+			}
+			if (!parser_accept(p, TK_STAR))
+			{
+				parser_set_error(p, "expected '*' after 'import' for dynamic libraries");
+				return make_lit(mk_nil());
+			}
+			parser_accept(p, TK_SEMI);
+			return make_call(make_var("loadlib"), { make_lit(mk_str(path)) });
+		}
 		if (!parser_check(p, TK_IDENT))
 		{
 			parser_set_error(p, "expected module name after 'from'");
