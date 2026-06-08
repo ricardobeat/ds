@@ -97,7 +97,7 @@ older(alice, bob).name`;
 
 fn void test_fmt_if_multiline_when_long() @test
 {
-	String src = "if firstArg < secondArg then aLongerBranchResult else anotherLongerBranchResult";
+	String src = "if firstArg < secondArg then aVeryLongBranchResultThatIsSignificant else anotherVeryLongBranchResultThatIsSignificant";
 	String out = fmt(src);
 	// The expression is well over the formatter's threshold, so the
 	// formatter should break the if across lines.
@@ -109,6 +109,19 @@ fn void test_fmt_if_singleline_when_short() @test
 {
 	String out = fmt("if 1 < 2 then 10 else 20");
 	assert(out.contains("if 1 < 2 then 10 else 20"));
+}
+
+fn void test_fmt_else_if_chain() @test
+{
+	// Short inline chain
+	String out1 = fmt("if a then 1 else if b then 2 else 3");
+	assert(out1.contains("else if b then 2 else 3"), "else-if should stay on same line");
+	// Outer IF multiline, inner else-if should still chain on same line
+	String out2 = fmt("if veryLongConditionName then veryLongBranchResultName else if b then 2 else 3");
+	assert(out2.contains("else if b then 2 else 3"), "else-if should chain even when outer is multiline");
+	// Block branch forces multiline
+	String out3 = fmt("if x then y else { a\nb }");
+	assert(out3.contains("else {"), "block branch should use else { on same line");
 }
 
 fn void test_fmt_sample_round_trip() @test

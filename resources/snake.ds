@@ -178,8 +178,11 @@ let game_loop = fn() {
   if remain > 0 then term_sleep(remain) else nil
   let key = term_read_key()
   let _ = process_input(key)
+
   if $alive then tick() else nil
-  if $alive then game_loop()
+
+  if $alive then
+    game_loop()
   else {
     render()
     term_move(ROWS + 1, 1)

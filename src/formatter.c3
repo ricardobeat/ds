@@ -395,30 +395,81 @@ fn void fmt_expr(DString* buf, AstNode* e, int indent)
 			return;
 		case IF:
 		{
-			long cond_w = fmt_estimate_width(e.children[0]);
-			long then_w = fmt_estimate_width(e.children[1]);
-			long else_w = fmt_estimate_width(e.children[2]);
+			AstNode* cond_e = e.children[0];
+			AstNode* then_e = e.children[1];
+			AstNode* else_e = e.children[2];
+			bool then_is_block = then_e.type == SEQ;
+			bool else_is_block = else_e.type == SEQ;
+			long cond_w = fmt_estimate_width(cond_e);
+			long then_w = fmt_estimate_width(then_e);
+			long else_w = fmt_estimate_width(else_e);
 			long single_w = (long)indent + 3 + cond_w + 5 + then_w + 5 + else_w;
-			if (single_w < 50)
+			if (single_w < 100 && !then_is_block && !else_is_block)
 			{
 				buf.append("if ");
-				fmt_expr(buf, e.children[0], indent);
+				fmt_expr(buf, cond_e, indent);
 				buf.append(" then ");
-				fmt_expr(buf, e.children[1], indent);
+				fmt_expr(buf, then_e, indent);
 				buf.append(" else ");
-				fmt_expr(buf, e.children[2], indent);
+				fmt_expr(buf, else_e, indent);
 				return;
 			}
 			buf.append("if ");
-			fmt_expr(buf, e.children[0], indent);
-			buf.append(" then\n");
-			fmt_indent(buf, indent + FMT_INDENT);
-			fmt_expr(buf, e.children[1], indent + FMT_INDENT);
-			buf.append("\n");
-			fmt_indent(buf, indent);
-			buf.append("else\n");
-			fmt_indent(buf, indent + FMT_INDENT);
-			fmt_expr(buf, e.children[2], indent + FMT_INDENT);
+			fmt_expr(buf, cond_e, indent);
+			buf.append(" then");
+			if (then_is_block)
+			{
+				buf.append(" {");
+				for (int i = 0; i < then_e.children.len; i++)
+				{
+					buf.append("\n");
+					fmt_indent(buf, indent + FMT_INDENT);
+					fmt_expr(buf, then_e.children[i], indent + FMT_INDENT);
+				}
+				buf.append("\n");
+				fmt_indent(buf, indent);
+				buf.append("}");
+			}
+			else
+			{
+				buf.append("\n");
+				fmt_indent(buf, indent + FMT_INDENT);
+				fmt_expr(buf, then_e, indent + FMT_INDENT);
+			}
+			if (then_is_block)
+			{
+				buf.append(" else");
+			}
+			else
+			{
+				buf.append("\n");
+				fmt_indent(buf, indent);
+				buf.append("else");
+			}
+			if (else_is_block)
+			{
+				buf.append(" {");
+				for (int i = 0; i < else_e.children.len; i++)
+				{
+					buf.append("\n");
+					fmt_indent(buf, indent + FMT_INDENT);
+					fmt_expr(buf, else_e.children[i], indent + FMT_INDENT);
+				}
+				buf.append("\n");
+				fmt_indent(buf, indent);
+				buf.append("}");
+			}
+			else if (else_e.type == IF)
+			{
+				buf.append(" ");
+				fmt_expr(buf, else_e, indent);
+			}
+			else
+			{
+				buf.append("\n");
+				fmt_indent(buf, indent + FMT_INDENT);
+				fmt_expr(buf, else_e, indent + FMT_INDENT);
+			}
 			return;
 		}
 		case LAMBDA:

@@ -7,4 +7,5 @@ authors = ["rtomasi"]
 repository = "https://github.com/user/zed-ds"
 
 [grammars.ds]
-path = "grammars/ds"
+repository = "file:///Users/rtomasi/cousas/new-engine/editors/tree-sitter-ds"
+rev = "6d381ae2e919883fa9ff7a7ee564987d74d4ab33"
