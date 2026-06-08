@@ -118,9 +118,9 @@ const ulong TAG_NIL     = 0x7FFC000000000000UL;
 const ulong TAG_BOOL    = 0x7FFD000000000000UL;
 const ulong TAG_STR     = 0x7FFE000000000000UL;
 const ulong TAG_ARRAY   = 0x7FFF000000000000UL;
-const ulong TAG_RECORD  = 0x8000000000000000UL;
-const ulong TAG_CLOSURE = 0x8001000000000000UL;
-const ulong TAG_PRIM    = 0x8002000000000000UL;
+const ulong TAG_RECORD  = 0x7FF9000000000000UL;
+const ulong TAG_CLOSURE = 0x7FFA000000000000UL;
+const ulong TAG_PRIM    = 0x7FFB000000000000UL;
 
 // High bit in Env.count signals "this Env doubles as a closure" — its
 // union carries closure_params instead of bindings.
@@ -934,6 +934,43 @@ fn void env_set(Env* env, uint name_id, Value v) {
 // Each primitive returns an EvalResult because some (like `array_all`) need
 // control flow that would otherwise re-enter eval in a confusing way.
 
+// ============================================================================
+// HOST FUNCTION TABLE (for embedding)
+// ============================================================================
+
+alias HostFn = fn EvalResult(Value[] args);
+
+const int MAX_HOST_FNS = 64;
+HostFn[MAX_HOST_FNS] g_host_fns;
+String[MAX_HOST_FNS] g_host_fn_names;
+int g_host_fn_count = 0;
+
+fn bool register_host_fn(String name, HostFn func) {
+	if (g_host_fn_count >= MAX_HOST_FNS) return false;
+	g_host_fn_names[g_host_fn_count] = name;
+	g_host_fns[g_host_fn_count] = func;
+	g_host_fn_count++;
+	return true;
+}
+
+fn bool has_host_fn(String name) {
+	for (int i = 0; i < g_host_fn_count; i++) {
+		if (name == g_host_fn_names[i]) return true;
+	}
+	return false;
+}
+
+fn EvalResult call_host_fn(String name, Value[] args) {
+	for (int i = 0; i < g_host_fn_count; i++) {
+		if (name == g_host_fn_names[i]) return g_host_fns[i](args);
+	}
+	return { .thrown = true, .value = mk_str("host function not found") };
+}
+
+// ============================================================================
+// PRIMITIVE DISPATCH
+// ============================================================================
+
 fn EvalResult prim_dispatch(String name, Value[] args) {
 	switch (name) {
 		case "+":
@@ -1074,6 +1111,10 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 				io::printn(*as_str(s));
 			}
 			return { .value = mk_nil() };
+	}
+	// Check host function table (registered by embedder)
+	if (has_host_fn(name)) {
+		return call_host_fn(name, args);
 	}
 	return { .thrown = true, .value = mk_str(string::tformat("unknown primitive: %s", name)) };
 }
@@ -1911,77 +1952,4 @@ fn Value run_source_vm(String src)
 	};
 }
 
-fn int main(String[] args) {
-	intern_init();
-	builtin_env = make_builtin_env();
-	if (args.len < 2)
-	{
-		io::printn("usage:");
-		io::printn("  engine run <file.ds>     evaluate a script and print the result");
-		io::printn("  engine fmt <file.ds>     print the source re-formatted in canonical style");
-		return 0;
-	}
-	if (args[1] == "fmt")
-	{
-		if (args.len < 3)
-		{
-			io::printn("usage: engine fmt <file.ds>");
-			return 1;
-		}
-		char[]? contents = file::load_temp(args[2]);
-		if (catch err = contents)
-		{
-			io::printfn("error: could not read %s", args[2]);
-			return 1;
-		}
-		FormatResult fr = format_source((String)contents);
-		if (fr.error)
-		{
-			io::printfn("%s", fr.message);
-			return 1;
-		}
-		io::print(fr.output);
-		return 0;
-	}
-	if (args[1] == "run")
-	{
-		if (args.len < 3)
-		{
-			io::printn("usage: engine run <file.ds>");
-			return 1;
-		}
-		char[]? contents = file::load_temp(args[2]);
-		if (catch err = contents)
-		{
-			io::printfn("error: could not read %s", args[2]);
-			return 1;
-		}
-		run_source((String)contents);
-		return 0;
-	}
-	if (args[1] == "vm")
-	{
-		if (args.len < 3)
-		{
-			io::printn("usage: engine vm <file.ds>");
-			return 1;
-		}
-		char[]? contents = file::load_temp(args[2]);
-		if (catch err = contents)
-		{
-			io::printfn("error: could not read %s", args[2]);
-			return 1;
-		}
-		run_source_vm((String)contents);
-		return 0;
-	}
-	// Default: treat args[1] as a script to run (backwards-compatible).
-	char[]? contents = file::load_temp(args[1]);
-	if (catch err = contents)
-	{
-		io::printfn("error: could not read %s", args[1]);
-		return 1;
-	}
-	run_source((String)contents);
-	return 0;
-}
+

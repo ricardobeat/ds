@@ -115,6 +115,13 @@ fn bool try_emit_builtin(Compiler* c, String name) {
 			emit_op(c.chunk, (char)idx, 0);
 			return true;
 	}
+	// Check host-registered functions
+	if (has_host_fn(name)) {
+		int idx = add_constant(c.chunk, mk_prim(name));
+		emit_op(c.chunk, (char)Op.PUSH_CONST, 0);
+		emit_op(c.chunk, (char)idx, 0);
+		return true;
+	}
 	return false;
 }
 

@@ -4,22 +4,39 @@
   "dependency-search-paths": ["lib"],
   "dependencies": [],
   "version": "0.1.0",
-  "sources": ["src/**"],
+  "sources": [],
   "test-sources": ["test/**"],
   "build-dir": "build",
   "output": "build",
   "targets": {
     "engine": {
-      "type": "executable"
+      "type": "executable",
+      "sources": ["src/**"]
     },
     "release": {
       "type": "executable",
+      "sources": ["src/**"],
       "opt": "Os",
       "optsize": "tiny",
       "optlevel": "more",
       "memory-env": "tiny",
       "fp-math": "relaxed",
       "strip-unused": true
+    },
+    "libengine": {
+      "type": "static-lib",
+      "sources": [
+        "src/main.c3", "src/parser.c3", "src/formatter.c3",
+        "src/compiler.c3", "src/chunk.c3", "src/vm.c3", "src/embed.c3"
+      ]
+    },
+    "host-example": {
+      "type": "executable",
+      "sources": [
+        "src/main.c3", "src/parser.c3", "src/formatter.c3",
+        "src/compiler.c3", "src/chunk.c3", "src/vm.c3", "src/embed.c3",
+        "example/src/main.c3"
+      ]
     }
   },
   "cpu": "generic",
