@@ -11,15 +11,17 @@
 "try" @keyword
 "catch" @keyword
 "match" @keyword
-"from" @keyword.import
-"import" @keyword.import
 "type" @keyword
+"and" @keyword
+"or" @keyword
+"from" @keyword
+"import" @keyword
 
 ; ── Literals ──────────────────────────────────────────────────
 (string) @string
 (number) @number
-(boolean) @constant.builtin
-(nil_literal) @constant.builtin
+(boolean) @constant
+(nil_literal) @constant
 
 ; ── Operators ─────────────────────────────────────────────────
 "=" @operator
@@ -37,12 +39,8 @@
 "!" @operator
 "->" @operator
 
-; ── Logical keywords used as operators ────────────────────────
-"and" @keyword.operator
-"or" @keyword.operator
-
 ; ── Signal sugar ──────────────────────────────────────────────
-"$" @punctuation.special
+"$" @punctuation
 
 (signal_read
   name: (identifier) @variable)
@@ -51,31 +49,28 @@
   name: (identifier) @variable)
 
 ; ── Punctuation ───────────────────────────────────────────────
-"(" @punctuation.bracket
-")" @punctuation.bracket
-"[" @punctuation.bracket
-"]" @punctuation.bracket
-"{" @punctuation.bracket
-"}" @punctuation.bracket
-"," @punctuation.delimiter
-";" @punctuation.delimiter
-":" @punctuation.delimiter
-"." @punctuation.delimiter
+"(" @punctuation
+")" @punctuation
+"[" @punctuation
+"]" @punctuation
+"{" @punctuation
+"}" @punctuation
+"," @punctuation
+";" @punctuation
+":" @punctuation
+"." @punctuation
 
 ; ── Functions ─────────────────────────────────────────────────
-(fn_expression
-  "fn" @keyword.function)
-
 (call_expression
-  function: (identifier) @function.call)
+  function: (identifier) @function)
 
 (call_expression
   function: (member_expression
-    property: (identifier) @function.method.call))
+    property: (identifier) @function))
 
 ; ── Parameters ────────────────────────────────────────────────
 (parameter
-  name: (identifier) @variable.parameter)
+  name: (identifier) @variable)
 
 ; ── Fields ────────────────────────────────────────────────────
 (field
@@ -91,7 +86,7 @@
 
 ; ── Import bindings ───────────────────────────────────────────
 (import_declaration
-  module: (identifier) @module)
+  module: (identifier) @namespace)
 
 (import_declaration
   (identifier) @variable)
@@ -105,7 +100,7 @@
   tag: (upper_identifier) @constructor)
 
 (match_arm
-  binding: (identifier) @variable.parameter)
+  binding: (identifier) @variable)
 
 ; ── Elements (JSX-like) ───────────────────────────────────────
 (element_expression
@@ -118,7 +113,7 @@
   close_tag: (identifier) @tag)
 
 (element_attribute
-  name: (identifier) @attribute)
+  name: (identifier) @tag)
 
 (element_attribute
   value: (string) @string)
@@ -129,9 +124,6 @@
 (type_record
   (type_field
     (identifier) @property))
-
-(type_sum
-  (type_name) @type)
 
 (parameter
   type: (type_name) @type)
