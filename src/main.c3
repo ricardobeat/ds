@@ -5,6 +5,51 @@ import std::collections::map;
 import std::core::dstring;
 
 // ============================================================================
+// C INTEROP (plugin loading via dlopen)
+// ============================================================================
+
+extern fn void* dlopen(char* path, int mode);
+extern fn void* dlsym(void* handle, char* symbol);
+extern fn int dlclose(void* handle);
+const int RTLD_NOW = 2;
+
+// DsResult matches the C struct layout in ds_plugin.h: { ulong value; int thrown; }
+struct DsResult {
+	ulong value;
+	int thrown;
+}
+
+// C-side host function signature: DsResult fn(ulong* args, int nargs)
+alias DsCFn = fn DsResult(ulong* args, int nargs);
+
+// DsApi struct matches ds_plugin.h layout (12 function pointers, 8 bytes each).
+struct DsApi {
+	void* mk_num;
+	void* mk_nil;
+	void* mk_bool;
+	void* mk_str;
+	void* as_num;
+	void* as_bool;
+	void* is_num;
+	void* is_nil;
+	void* is_str;
+	void* as_cstr;
+	void* show;
+	void* register_fn;
+}
+
+// Plugin init signature: void ds_init(DsApi* api)
+alias DsInitFn = fn void(DsApi*);
+
+// Plugin C function pointers (parallel to g_host_fns, null for C3 functions).
+void*[MAX_HOST_FNS] g_c_host_fns;
+
+// Track loaded library handles for cleanup.
+const int MAX_LIBS = 8;
+void*[MAX_LIBS] g_lib_handles;
+int g_lib_count = 0;
+
+// ============================================================================
 // TYPES (Rung 1 + Rung 2 surface types)
 // ============================================================================
 // 
@@ -121,6 +166,7 @@ const ulong TAG_ARRAY   = 0x7FFF000000000000UL;
 const ulong TAG_RECORD  = 0x7FF9000000000000UL;
 const ulong TAG_CLOSURE = 0x7FFA000000000000UL;
 const ulong TAG_PRIM    = 0x7FFB000000000000UL;
+const ulong TAG_SIGNAL  = 0x7FF8000000000000UL;
 
 // High bit in Env.count signals "this Env doubles as a closure" — its
 // union carries closure_params instead of bindings.
@@ -134,6 +180,7 @@ fn Value val_arr(Array* p)   => (Value)(TAG_ARRAY  | ((ulong)(uptr)p & PTR_MASK)
 fn Value val_rec(Record* p)  => (Value)(TAG_RECORD | ((ulong)(uptr)p & PTR_MASK));
 fn Value val_closure(Closure* p) => (Value)(TAG_CLOSURE | ((ulong)(uptr)p & PTR_MASK));
 fn Value val_prim(Prim* p)   => (Value)(TAG_PRIM   | ((ulong)(uptr)p & PTR_MASK));
+fn Value val_signal(Signal* p)  => (Value)(TAG_SIGNAL  | ((ulong)(uptr)p & PTR_MASK));
 
 fn bool   is_num(Value v)    => ((ulong)v & NAN_BITS) != NAN_BITS;
 fn bool   is_nil(Value v)    => (ulong)v == TAG_NIL;
@@ -143,6 +190,7 @@ fn bool   is_arr(Value v)    => ((ulong)v & TAG_MASK) == TAG_ARRAY;
 fn bool   is_rec(Value v)    => ((ulong)v & TAG_MASK) == TAG_RECORD;
 fn bool   is_closure(Value v) => ((ulong)v & TAG_MASK) == TAG_CLOSURE;
 fn bool   is_prim(Value v)   => ((ulong)v & TAG_MASK) == TAG_PRIM;
+fn bool   is_signal(Value v)  => ((ulong)v & TAG_MASK) == TAG_SIGNAL;
 
 fn double   as_num(Value v)    => bitcast((ulong)v, double);
 fn bool     as_bool(Value v)   => (bool)((ulong)v & 1);
@@ -151,6 +199,7 @@ fn Array*   as_arr(Value v)    => (Array*)(uptr)((ulong)v & PTR_MASK);
 fn Record*  as_rec(Value v)    => (Record*)(uptr)((ulong)v & PTR_MASK);
 fn Closure* as_closure(Value v) => (Closure*)(uptr)((ulong)v & PTR_MASK);
 fn Prim*    as_prim(Value v)   => (Prim*)(uptr)((ulong)v & PTR_MASK);
+fn Signal*  as_signal(Value v)  => (Signal*)(uptr)((ulong)v & PTR_MASK);
 
 // Convenience tag enum for runtime type queries / debug printing.
 // Numeric values match the `ordinal()` of the old ValueType for tests
@@ -164,6 +213,7 @@ enum ValueTag : int {
 	RECORD,
 	CLOSURE,
 	PRIMITIVE,
+	SIGNAL,
 }
 
 fn ValueTag tag_of(Value v) {
@@ -266,6 +316,43 @@ struct Closure {
 // at apply time; carrying the name keeps debugging output honest.
 struct Prim {
 	String name;
+}
+
+// ============================================================================
+// REACTIVE TYPES (signals + derived)
+// ============================================================================
+//
+// Signal: a mutable reactive cell.  signal_set notifies all subscribers.
+// When kind == DERIVED, it is a lazy computed value that caches its result
+// and re-evaluates only when a dependency changes and its value is read.
+// DepNode: intrusive linked-list node for the subscriber/dep chains.
+
+enum SignalKind : char { SIG_PLAIN, SIG_DERIVED }
+
+struct DepNode {
+	DepNode* next;
+	Value    target;  // TAG_SIGNAL Value (NaN-boxed pointer)
+}
+
+struct Signal {
+	uint       refcount;
+	SignalKind kind;
+	Value      current;    // SIG_PLAIN: the stored value; SIG_DERIVED: cached result
+	bool       dirty;      // SIG_DERIVED only
+	bool       running;    // SIG_DERIVED only (circular dep guard)
+	Closure*   closure;    // SIG_DERIVED only (0-arg computation)
+	DepNode*   deps;       // SIG_DERIVED only (what I depend on)
+	DepNode*   subs;       // both: who depends on me
+}
+
+fn bool signal_is_derived(Signal* s) => s.kind == SIG_DERIVED;
+
+// An active effect: a closure that re-runs when its deps change.
+struct Effect {
+	Closure* func;
+	DepNode* deps;
+	Effect*  next;        // global linked list of all active effects
+	bool     running;     // guard against re-entrant re-runs
 }
 
 // ============================================================================
@@ -417,6 +504,41 @@ fn Prim* new_prim(String n) {
 	Prim* p = mem::tnew(Prim);
 	p.name = n;
 	return p;
+}
+
+fn Signal* new_signal(Value init) {
+	Signal* s = mem::new(Signal);
+	s.refcount = 1;
+	s.kind = SIG_PLAIN;
+	s.current = init;
+	s.dirty = false;
+	s.running = false;
+	s.closure = null;
+	s.deps = null;
+	s.subs = null;
+	return s;
+}
+
+fn Signal* new_derived(Closure* closure) {
+	Signal* s = mem::new(Signal);
+	s.refcount = 1;
+	s.kind = SIG_DERIVED;
+	s.current = mk_nil();
+	s.dirty = true;
+	s.running = false;
+	s.closure = closure;
+	s.deps = null;
+	s.subs = null;
+	return s;
+}
+
+fn Effect* new_effect(Closure* func) {
+	Effect* e = mem::new(Effect);
+	e.func = func;
+	e.deps = null;
+	e.next = null;
+	e.running = false;
+	return e;
 }
 
 fn AstNode* make_lit(Value v) {
@@ -753,6 +875,16 @@ fn Value show(Value v) {
 		return mk_str(buf.str_view());
 	}
 	if (is_prim(v)) return mk_str(string::tformat("<prim %s>", as_prim(v).name));
+	if (is_signal(v)) {
+		Signal* sig = as_signal(v);
+		if (signal_is_derived(sig)) {
+			if (sig.dirty) return mk_str("<derived (dirty)>");
+			Value s = show(sig.current);
+			return mk_str(string::tformat("<derived %s>", *as_str(s)));
+		}
+		Value s = show(sig.current);
+		return mk_str(string::tformat("<signal %s>", *as_str(s)));
+	}
 	return mk_nil();
 }
 
@@ -953,6 +1085,15 @@ fn bool register_host_fn(String name, HostFn func) {
 	return true;
 }
 
+fn bool register_c_host_fn(String name, void* c_fn) {
+	if (g_host_fn_count >= MAX_HOST_FNS) return false;
+	g_host_fn_names[g_host_fn_count] = name;
+	g_host_fns[g_host_fn_count] = null;
+	g_c_host_fns[g_host_fn_count] = c_fn;
+	g_host_fn_count++;
+	return true;
+}
+
 fn bool has_host_fn(String name) {
 	for (int i = 0; i < g_host_fn_count; i++) {
 		if (name == g_host_fn_names[i]) return true;
@@ -962,9 +1103,226 @@ fn bool has_host_fn(String name) {
 
 fn EvalResult call_host_fn(String name, Value[] args) {
 	for (int i = 0; i < g_host_fn_count; i++) {
-		if (name == g_host_fn_names[i]) return g_host_fns[i](args);
+		if (name == g_host_fn_names[i]) {
+			if (g_c_host_fns[i] != null) return call_c_plugin(g_c_host_fns[i], args);
+			return g_host_fns[i](args);
+		}
 	}
 	return { .thrown = true, .value = mk_str("host function not found") };
+}
+
+// Adapter: convert between C3 Value[] and C DsValue*/nargs, call the C function.
+fn EvalResult call_c_plugin(void* c_fn, Value[] args) {
+	ulong[16] c_args;
+	int nargs = (int)args.len;
+	for (int i = 0; i < nargs && i < 16; i++) {
+		c_args[i] = (ulong)args[i];
+	}
+	DsCFn fn_ptr = (DsCFn)c_fn;
+	DsResult r = fn_ptr(&c_args, nargs);
+	return { .thrown = r.thrown != 0, .value = (Value)r.value };
+}
+
+// ============================================================================
+// PLUGIN API (DsApi wrappers + loadlib primitive)
+// ============================================================================
+
+fn ulong api_mk_num(double d) => (ulong)mk_num(d);
+fn ulong api_mk_nil() => (ulong)mk_nil();
+fn ulong api_mk_bool(int b) => (ulong)mk_bool(b != 0);
+fn double api_as_num(ulong v) => as_num((Value)v);
+fn int api_as_bool(ulong v) => as_bool((Value)v) ? 1 : 0;
+fn int api_is_num(ulong v) => is_num((Value)v) ? 1 : 0;
+fn int api_is_nil(ulong v) => is_nil((Value)v) ? 1 : 0;
+fn int api_is_str(ulong v) => is_str((Value)v) ? 1 : 0;
+
+fn ulong api_mk_str(char* c) {
+	sz len = 0;
+	while (c[len] != 0) len++;
+	String s = (String)c[0:len];
+	return (ulong)mk_str(s);
+}
+
+fn char* api_as_cstr(ulong v) {
+	String* sp = as_str((Value)v);
+	return sp.ptr;
+}
+
+fn char* api_show(ulong v) {
+	Value s = show((Value)v);
+	String* sp = as_str(s);
+	return sp.ptr;
+}
+
+fn int api_register_fn(char* name, void* c_fn) {
+	sz len = 0;
+	while (name[len] != 0) len++;
+	String s = (String)name[0:len];
+	bool ok = register_c_host_fn(s, c_fn);
+	if (ok && builtin_env != null) {
+		uint id = intern(s);
+		Binding new_binding = { .name_id = id, .value = mk_prim(s) };
+		Binding* old = builtin_env.data.bindings_ptr;
+		uint n = builtin_env.count;
+		Binding* grown = mem::talloc_array(Binding, (sz)(n + 1));
+		for (uint i = 0; i < n; i++) grown[i] = old[i];
+		grown[n] = new_binding;
+		builtin_env.data.bindings_ptr = grown;
+		builtin_env.count = n + 1;
+	}
+	return ok ? 1 : 0;
+}
+
+fn EvalResult loadlib_fn(Value[] args) {
+	if (!is_str(args[0])) {
+		return { .thrown = true, .value = mk_str("loadlib expects a string path") };
+	}
+	char* path = as_str(args[0]).ptr;
+	void* handle = dlopen(path, RTLD_NOW);
+	if (handle == null) {
+		return { .thrown = true, .value = mk_str("loadlib: failed to open library") };
+	}
+	void* init_sym = dlsym(handle, "ds_init");
+	if (init_sym == null) {
+		dlclose(handle);
+		return { .thrown = true, .value = mk_str("loadlib: no ds_init symbol found") };
+	}
+	DsApi* api = mem::new(DsApi);
+	api.mk_num      = (void*)&api_mk_num;
+	api.mk_nil      = (void*)&api_mk_nil;
+	api.mk_bool     = (void*)&api_mk_bool;
+	api.mk_str      = (void*)&api_mk_str;
+	api.as_num      = (void*)&api_as_num;
+	api.as_bool     = (void*)&api_as_bool;
+	api.is_num      = (void*)&api_is_num;
+	api.is_nil      = (void*)&api_is_nil;
+	api.is_str      = (void*)&api_is_str;
+	api.as_cstr     = (void*)&api_as_cstr;
+	api.show        = (void*)&api_show;
+	api.register_fn = (void*)&api_register_fn;
+	DsInitFn init_fn = (DsInitFn)init_sym;
+	init_fn(api);
+	if (g_lib_count < MAX_LIBS) {
+		g_lib_handles[g_lib_count] = handle;
+		g_lib_count++;
+	}
+	return { .value = mk_nil() };
+}
+
+// ============================================================================
+// REACTIVE MACHINERY (signals, derived, effects)
+// ============================================================================
+
+// Global subscriber tracking: when non-null, any signal_get will register
+// the active subscriber as a dependency of the signal being read.
+void*  g_active_subscriber;   // Effect* or Derived*
+bool   g_active_is_derived;
+
+// Global linked list of all active effects (for cleanup).
+Effect* g_effects;
+
+// Element stable-ref state.
+int g_element_slot;
+
+fn void dep_push(DepNode** list, Value target) {
+	// Avoid duplicate entries — check if target already in list.
+	for (DepNode* n = *list; n != null; n = n.next) {
+		if (n.target == target) return;
+	}
+	DepNode* node = mem::new(DepNode);
+	node.next = *list;
+	node.target = target;
+	*list = node;
+}
+
+// Register a signal read: link the signal to the active subscriber bidirectionally.
+fn void reactive_track(Signal* sig) {
+	if (g_active_subscriber == null) return;
+	Value sig_val = val_signal(sig);
+	// Add signal to the active subscriber's dep list.
+	if (g_active_is_derived) {
+		Signal* sub = (Signal*)(uptr)g_active_subscriber;
+		dep_push(&sub.deps, sig_val);
+	} else {
+		Effect* e = (Effect*)(uptr)g_active_subscriber;
+		dep_push(&e.deps, sig_val);
+	}
+	// Add the active subscriber to the signal's sub list.
+	// Encode derived subscribers as TAG_SIGNAL, effect subscribers as TAG_CLOSURE.
+	if (g_active_is_derived) {
+		dep_push(&sig.subs, val_signal((Signal*)(uptr)g_active_subscriber));
+	} else {
+		dep_push(&sig.subs, val_closure(((Effect*)(uptr)g_active_subscriber).func));
+	}
+}
+
+// Mark a derived (and transitively its derived subscribers) as needing recomputation.
+fn void mark_dirty(Signal* d) {
+	if (d.dirty) return;
+	d.dirty = true;
+	for (DepNode* sub = d.subs; sub != null; sub = sub.next) {
+		if (is_signal(sub.target)) {
+			Signal* s = as_signal(sub.target);
+			if (signal_is_derived(s)) mark_dirty(s);
+		}
+	}
+}
+
+// Re-run an effect: clear its old deps, invoke the closure with tracking on.
+fn void effect_rerun(Effect* e) {
+	if (e.running) return; // prevent re-entrant re-runs
+	e.running = true;
+	void* prev_sub = g_active_subscriber;
+	bool prev_kind = g_active_is_derived;
+	g_active_subscriber = e;
+	g_active_is_derived = false;
+	e.deps = null;
+	// Use eval directly (apply_fn returns tail-call thunks).
+	eval(e.func.body, e.func.env);
+	g_active_subscriber = prev_sub;
+	g_active_is_derived = prev_kind;
+	e.running = false;
+}
+
+// Walk a subscriber list: mark deriveds dirty, re-run effects.
+fn void notify_subs(DepNode* subs) {
+	for (DepNode* sub = subs; sub != null; sub = sub.next) {
+		if (is_signal(sub.target)) {
+			Signal* s = as_signal(sub.target);
+			if (signal_is_derived(s)) mark_dirty(s);
+		} else if (is_closure(sub.target)) {
+			for (Effect* e = g_effects; e != null; e = e.next) {
+				if (val_closure(e.func) == sub.target) {
+					effect_rerun(e);
+					break;
+				}
+			}
+		}
+	}
+}
+
+// Evaluate a derived: recompute if dirty, cache the result.
+fn Value derived_evaluate(Signal* d) {
+	if (!d.dirty) return d.current;
+	if (d.running) return d.current;
+	d.running = true;
+	void* prev_sub = g_active_subscriber;
+	bool prev_kind = g_active_is_derived;
+	g_active_subscriber = d;
+	g_active_is_derived = true;
+	d.deps = null;
+	// Use eval() directly (not apply_fn, which returns tail-call thunks).
+	Env* call_env = d.closure.env;
+	if (d.closure.param_ids.len > 0) {
+		call_env = env_extend(d.closure.env, d.closure.param_ids, {});
+	}
+	EvalResult r = eval(d.closure.body, call_env);
+	if (!r.thrown) d.current = r.value;
+	d.dirty = false;
+	d.running = false;
+	g_active_subscriber = prev_sub;
+	g_active_is_derived = prev_kind;
+	return d.current;
 }
 
 // ============================================================================
@@ -1111,6 +1469,105 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 				io::printn(*as_str(s));
 			}
 			return { .value = mk_nil() };
+		case "signal":
+		{
+			// signal(initial_value) => Signal value
+			Signal* sig = new_signal(args[0]);
+			return { .value = val_signal(sig) };
+		}
+		case "signal_get":
+		{
+			// signal_get(signal_or_derived) => current value
+			if (!is_signal(args[0])) {
+				return { .thrown = true, .value = mk_str("type error: signal_get expects signal or derived") };
+			}
+			Signal* sig = as_signal(args[0]);
+			reactive_track(sig);
+			if (signal_is_derived(sig)) {
+				return { .value = derived_evaluate(sig) };
+			}
+			return { .value = sig.current };
+		}
+		case "signal_set":
+		{
+			// signal_set(signal, new_value) => nil
+			if (!is_signal(args[0])) {
+				return { .thrown = true, .value = mk_str("type error: signal_set expects signal") };
+			}
+			Signal* sig = as_signal(args[0]);
+			if (signal_is_derived(sig)) {
+				return { .thrown = true, .value = mk_str("type error: signal_set expects a plain signal, not a derived") };
+			}
+			sig.current = args[1];
+			notify_subs(sig.subs);
+			return { .value = mk_nil() };
+		}
+		case "derived":
+		{
+			// derived(fn) => derived signal (lazy computed)
+			if (!is_closure(args[0])) {
+				return { .thrown = true, .value = mk_str("type error: derived expects closure") };
+			}
+			Signal* d = new_derived(as_closure(args[0]));
+			return { .value = val_signal(d) };
+		}
+		case "effect":
+		{
+			// effect(fn) => unsubscribe closure
+			if (!is_closure(args[0])) {
+				return { .thrown = true, .value = mk_str("type error: effect expects closure") };
+			}
+			Effect* e = new_effect(as_closure(args[0]));
+			// Link into global effect list.
+			e.next = g_effects;
+			g_effects = e;
+			// Run the effect once with tracking.
+			effect_rerun(e);
+			// Return an unsubscribe closure that removes this effect.
+			// We use a prim-call: Call(Prim("__unsub"), [Lit(effect_as_value)])
+			// But we can't easily create a closure at runtime.  Instead, return
+			// the effect pointer as a Value so the user can pass it to __unsub.
+			// For simplicity, just return nil for now (effects live until program end).
+			return { .value = mk_nil() };
+		}
+		case "__element":
+		{
+			// __element(tag, props, ...children) => { __tag, __props, __children, __id }
+			// Provides stable identity for JSX-like elements.
+			if (args.len < 2) {
+				return { .thrown = true, .value = mk_str("type error: __element expects at least (tag, props)") };
+			}
+			Value tag = args[0];
+			Value props = args[1];
+			// Build children array from remaining args.
+			int nkids = (int)args.len - 2;
+			Value[] kids = mem::talloc_array(Value, (sz)nkids);
+			for (int i = 0; i < nkids; i++) kids[i] = args[i + 2];
+			Array* kids_arr = new_array();
+			kids_arr.items = kids;
+			int slot = g_element_slot;
+			g_element_slot++;
+			// Build result record.
+			uint[] atom_keys = mem::talloc_array(uint, 4);
+			atom_keys[0] = intern("__tag"); atom_keys[1] = intern("__props");
+			atom_keys[2] = intern("__children"); atom_keys[3] = intern("__id");
+			Value[] vals = mem::talloc_array(Value, 4);
+			vals[0] = tag; vals[1] = props; vals[2] = val_arr(kids_arr); vals[3] = mk_num((double)slot);
+			Record* r = new_record();
+			r.keys = atom_keys;
+			r.values = vals;
+			return { .value = val_rec(r) };
+		}
+		case "__begin_render":
+		{
+			// Reset the element cursor for a new render pass.
+			g_element_slot = 0;
+			return { .value = mk_nil() };
+		}
+	}
+	// loadlib: dynamic plugin loading
+	if (name == "loadlib") {
+		return loadlib_fn(args);
 	}
 	// Check host function table (registered by embedder)
 	if (has_host_fn(name)) {
@@ -1879,6 +2336,9 @@ fn Env* make_builtin_env()
 		"and", "or",
 		"is_number", "is_string", "is_bool", "is_array", "is_record", "is_nil",
 		"has_field", "len", "push", "print", "array_all", "slice",
+		"signal", "signal_get", "signal_set", "derived", "effect",
+		"__element", "__begin_render",
+		"loadlib",
 	};
 	Env* e = mem::tnew(Env);
 	e.parent = null;

@@ -197,6 +197,8 @@ fn Token lex_ident(Lexer* l, long start_line, long start_col)
 	else if (text == "catch") { t.kind = TK_KW_CATCH; }
 	else if (text == "type") { t.kind = TK_KW_TYPE; }
 	else if (text == "match") { t.kind = TK_KW_MATCH; }
+	else if (text == "and") { t.kind = TK_AND; }
+	else if (text == "or") { t.kind = TK_OR; }
 	else { t.kind = TK_IDENT; }
 	return t;
 }
@@ -332,13 +334,14 @@ fn void lex_init(Lexer* l, String src)
 //   postfix_op := "." IDENT | "(" args? ")" | "[" expr "]"
 //   primary  := NUM | STR | "true"|"false"|"nil" | IDENT
 //             | "(" expr ")"
-//             | record_literal | array_literal
+//             | record_literal | array_literal | block_expr
 //             | "fn" IDENT? "(" params? ")" ("->" type)? expr
 //             | "if" expr "then" expr "else" expr
 //             | "throw" expr
 //             | "try" expr "catch" IDENT expr
 //             | "match" expr "{" arm+ "}"
-//   record_literal := "{" (field ("," field)*)? "}"
+//   record_literal := "{" IDENT ":" expr ("," IDENT ":" expr)* "}"
+//   block_expr     := "{" (let_decl | fn_decl | expr) (";" ...)* "}"
 //   field    := IDENT ":" expr
 //   array_literal  := "[" (expr ("," expr)*)? "]"
 //   arm      := UPPER_IDENT "(" IDENT ")" "=>" expr
@@ -1034,7 +1037,7 @@ fn AstNode* parse_lambda_params_and_body(Parser* p)
 	if (parser_check(p, TK_LBRACE))
 	{
 		parser_advance(p);
-		body = parse_or(p);
+		body = parse_block_contents(p);
 		if (p.error) return body;
 		if (!parser_accept(p, TK_RBRACE))
 		{
@@ -1086,7 +1089,19 @@ fn AstNode* parse_primary(Parser* p)
 			return e;
 		case TK_LBRACE:
 			parser_advance(p);
-			return parse_record_lit(p);
+			// Disambiguate: IDENT ":" → record literal, otherwise → block expression
+			if (parser_check(p, TK_IDENT) && p.lex.peek_tok.kind == TK_COLON)
+			{
+				return parse_record_lit(p);
+			}
+			AstNode* block_body = parse_block_contents(p);
+			if (p.error) return block_body;
+			if (!parser_accept(p, TK_RBRACE))
+			{
+				parser_set_error(p, "expected '}' to close block");
+				return block_body;
+			}
+			return block_body;
 		case TK_LBRACK:
 			parser_advance(p);
 			return parse_array_lit(p);
@@ -1266,6 +1281,48 @@ fn AstNode* parse_toplevel(Parser* p)
 	AstNode* e = parse_or(p);
 	parser_accept(p, TK_SEMI);
 	return e;
+}
+
+// parse_block_contents: parse a sequence of let-bindings and expressions
+// inside { ... }, separated by optional ';'.  Builds nested LetRec chains
+// so each let's name stays in scope for the rest of the block.
+fn AstNode* parse_block_contents(Parser* p)
+{
+	AstNode*[] items = {};
+	int n = 0;
+	while (!parser_check(p, TK_RBRACE) && !parser_check(p, TK_EOF))
+	{
+		AstNode* item = parse_toplevel(p);
+		if (p.error) return make_lit(mk_nil());
+		AstNode*[] ni = mem::talloc_array(AstNode*, (sz)(n + 1));
+		for (int i = 0; i < n; i++) ni[i] = items[i];
+		ni[n] = item;
+		items = ni;
+		n++;
+		parser_accept(p, TK_SEMI);
+	}
+	if (n == 0) return make_lit(mk_nil());
+	AstNode* body = items[n - 1];
+	for (int i = n - 2; i >= 0; i--)
+	{
+		AstNode* item = items[i];
+		if (item.type == LETREC)
+		{
+			body = make_letrec(item.name, item.children[0], body);
+		}
+		else if (item.type == LET_T)
+		{
+			body = make_typed_let(item.name, item.ann_type, item.children[0], body);
+		}
+		else
+		{
+			AstNode*[] seq_items = mem::talloc_array(AstNode*, 2);
+			seq_items[0] = item;
+			seq_items[1] = body;
+			body = make_seq(seq_items);
+		}
+	}
+	return body;
 }
 
 fn AstNode* parse_program(Parser* p)

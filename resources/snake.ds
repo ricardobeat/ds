@@ -1,0 +1,221 @@
+// snake.ds — Terminal snake game using reactive signals
+//
+// Run: ./build/engine run resources/snake.ds
+// Controls: w/a/s/d or arrow keys, q to quit
+
+// --- Load terminal plugin ---
+
+loadlib("build/libterm.dylib")
+
+let ROWS = 20
+let COLS = 40
+
+// --- Game state as signals ---
+
+let snake_sig = signal([{r: 10, c: 20}, {r: 10, c: 19}, {r: 10, c: 18}])
+let dir_sig   = signal(1)
+let food_sig  = signal({r: 5, c: 15})
+let score_sig = signal(0)
+let alive_sig = signal(true)
+
+// Derived: current head position
+let head_sig = derived(fn() { signal_get(snake_sig)[0] })
+
+// Derived: status line
+let status_sig = derived(fn() {
+  let h = signal_get(head_sig)
+  let s = signal_get(score_sig)
+  let a = signal_get(alive_sig)
+  if a then "Score: " + s + "  "
+  else "GAME OVER! Score: " + s
+})
+
+// --- Helpers ---
+
+let wrap = fn(val, max) {
+  if val >= max then wrap(val - max, max) else val
+}
+
+let dr = fn(d) {
+  if d === 0 then -1 else if d === 2 then 1 else 0
+}
+
+let dc = fn(d) {
+  if d === 1 then 1 else if d === 3 then -1 else 0
+}
+
+let hits_snake = fn(snake, r, c, i) {
+  if i >= len(snake) then false
+  else if snake[i].r === r and snake[i].c === c then true
+  else hits_snake(snake, r, c, i + 1)
+}
+
+let copy_range = fn(src, dst, i, end) {
+  let go = fn() { push(dst, src[i]); copy_range(src, dst, i + 1, end) }
+  if i >= end then nil else go()
+}
+
+let valid_dir = fn(nd, od) {
+  if nd === 0 and od === 2 then false
+  else if nd === 2 and od === 0 then false
+  else if nd === 1 and od === 3 then false
+  else if nd === 3 and od === 1 then false
+  else true
+}
+
+let key_to_dir = fn(key) {
+  if key === 119 or key === 256 then 0
+  else if key === 100 or key === 257 then 1
+  else if key === 115 or key === 258 then 2
+  else if key === 97 or key === 259 then 3
+  else -1
+}
+
+// --- Food generation ---
+
+let gen_food = fn(snake, r, c, tries) {
+  let nr = wrap(r + 7, 18) + 1
+  let nc = wrap(c + 13, 38) + 1
+  if tries > 100 then {r: 5, c: 5}
+  else if hits_snake(snake, nr, nc, 0) then gen_food(snake, nr, nc, tries + 1)
+  else {r: nr, c: nc}
+}
+
+// --- Game logic (updates signals) ---
+
+let build_new_snake = fn(old, new_head, ate) {
+  let result = []
+  let _ = push(result, new_head)
+  let end = if ate then len(old) else len(old) - 1
+  let _ = copy_range(old, result, 0, end)
+  result
+}
+
+let tick = fn() {
+  let snake = signal_get(snake_sig)
+  let dir = signal_get(dir_sig)
+  let food = signal_get(food_sig)
+  let head = snake[0]
+  let nr = head.r + dr(dir)
+  let nc = head.c + dc(dir)
+
+  let wall = nr <= 0 or nr >= ROWS - 1 or nc <= 0 or nc >= COLS - 1
+  let self_hit = hits_snake(snake, nr, nc, 1)
+  let ate = nr === food.r and nc === food.c
+
+  let die = fn() { signal_set(alive_sig, false) }
+  let eat = fn(new_snake) {
+    let _ = signal_set(score_sig, signal_get(score_sig) + 1)
+    signal_set(food_sig, gen_food(new_snake, nr, nc, 0))
+  }
+  let live = fn() {
+    let new_head = {r: nr, c: nc}
+    let new_snake = build_new_snake(snake, new_head, ate)
+    let _ = signal_set(snake_sig, new_snake)
+    if ate then eat(new_snake) else nil
+  }
+  if wall or self_hit then die() else live()
+}
+
+let process_input = fn(key) {
+  let do_move = fn() {
+    let nd = key_to_dir(key)
+    let cur = signal_get(dir_sig)
+    if nd === -1 then nil
+    else if valid_dir(nd, cur) then signal_set(dir_sig, nd)
+    else nil
+  }
+  if key === 113 then signal_set(alive_sig, false)
+  else do_move()
+}
+
+// --- Rendering (reads signals) ---
+
+let cell_char = fn(r, c, snake, food) {
+  if r === 0 or r === ROWS - 1 then "█"
+  else if c === 0 or c === COLS - 1 then "█"
+  else if snake[0].r === r and snake[0].c === c then "█"
+  else if hits_snake(snake, r, c, 1) then "▓"
+  else if food.r === r and food.c === c then "◆"
+  else "░"
+}
+
+let build_row = fn(r, c, snake, food) {
+  if c >= COLS then ""
+  else cell_char(r, c, snake, food) + build_row(r, c + 1, snake, food)
+}
+
+let render_rows = fn(r, snake, food) {
+  let row = build_row(r, 0, snake, food)
+  let rest = if r + 1 >= ROWS then "" else "\r\n" + render_rows(r + 1, snake, food)
+  row + rest
+}
+
+let render = fn() {
+  let snake = signal_get(snake_sig)
+  let food = signal_get(food_sig)
+  let frame = render_rows(0, snake, food)
+  term_move(1, 1)
+  term_write(frame)
+  term_move(ROWS + 1, 1)
+  term_color(11)
+  term_write(signal_get(status_sig))
+  term_reset_color()
+}
+
+// --- Game loop ---
+
+let FRAME_MS = 100
+
+let wait_for_quit = fn(ms_left) {
+  let retry = fn() { term_sleep(10); wait_for_quit(ms_left - 10) }
+  if ms_left <= 0 then false
+  else if term_read_key() === 113 then true
+  else retry()
+}
+
+let game_loop = fn() {
+  let t0 = term_ticks()
+  render()
+  let elapsed = term_ticks() - t0
+  let remain = FRAME_MS - elapsed
+  if remain > 0 then term_sleep(remain) else nil
+  let key = term_read_key()
+  let _ = process_input(key)
+  if signal_get(alive_sig) then tick() else nil
+  if signal_get(alive_sig) then game_loop()
+  else {
+    render()
+    term_move(ROWS + 1, 1)
+    term_color(9)
+    term_write("Game Over! Press q to quit, or wait to restart...")
+    term_reset_color()
+    if wait_for_quit(3000) then nil
+    else {
+      let _ = signal_set(snake_sig, [{r: 10, c: 20}, {r: 10, c: 19}, {r: 10, c: 18}])
+      let _ = signal_set(dir_sig, 1)
+      let _ = signal_set(food_sig, {r: 5, c: 15})
+      let _ = signal_set(score_sig, 0)
+      let _ = signal_set(alive_sig, true)
+      game_loop()
+    }
+  }
+}
+
+// --- Main ---
+
+term_raw()
+term_hide_cursor()
+term_clear()
+
+game_loop()
+
+term_show_cursor()
+term_restore()
+term_move(ROWS + 3, 1)
+term_color(9)
+term_write("Game Over! ")
+term_color(11)
+term_write("Final score: ", signal_get(score_sig))
+term_reset_color()
+print("")

@@ -1,0 +1,21 @@
+// keytest.ds — minimal key reading diagnostic
+loadlib("build/libterm.dylib")
+term_raw()
+term_clear()
+term_move(1, 1)
+term_write("Press keys (q to quit): ")
+
+let loop = fn() {
+  let key = term_read_key()
+  let _ = if key != nil then {
+    term_move(3, 1)
+    term_write("key = ", key, "        ")
+    if key === 113 then nil else loop()
+  } else loop()
+}
+loop()
+
+term_restore()
+term_move(5, 1)
+term_write("Done!")
+print("")
