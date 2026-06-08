@@ -1,0 +1,3 @@
+[submodule "editors/tree-sitter-ds"]
+	path = editors/tree-sitter-ds
+	url = ./editors/tree-sitter-ds
