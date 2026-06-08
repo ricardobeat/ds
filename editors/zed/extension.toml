@@ -1,0 +1,11 @@
+id = "ds-lang"
+name = "DS"
+description = "DS expression language support"
+version = "0.1.0"
+schema_version = 1
+authors = ["rtomasi"]
+repository = "https://github.com/user/zed-ds"
+
+[grammars.ds]
+repository = "file:///Users/rtomasi/cousas/new-engine/editors/tree-sitter-ds"
+rev = "86952d382be7a52c0feddd51858f6637778a3797"
