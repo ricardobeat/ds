@@ -8,4 +8,4 @@ repository = "https://github.com/user/zed-ds"
 
 [grammars.ds]
 repository = "file:///Users/rtomasi/cousas/new-engine/editors/tree-sitter-ds"
-rev = "86952d382be7a52c0feddd51858f6637778a3797"
+rev = "6d381ae609d4e1bf8766175175ba3a6d3f23c5ad"
