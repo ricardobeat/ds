@@ -443,14 +443,39 @@ fn void fmt_expr(DString* buf, AstNode* e, int indent)
 			return;
 		case LETREC:
 		case LET_T:
+			// Let binding in expression position (e.g. from...import inside a block).
+			// Emit as a let chain.
+			{
+				AstNode* chain = e;
+				while (chain != null && (chain.type == LETREC || chain.type == LET_T))
+				{
+					fmt_indent(buf, indent + 1);
+					buf.append("let ");
+					buf.append(chain.name);
+					buf.append(" = ");
+					fmt_expr(buf, chain.children[0], indent + 1);
+					buf.append(";\n");
+					chain = chain.children[1];
+				}
+				if (chain != null)
+				{
+					fmt_indent(buf, indent + 1);
+					fmt_expr(buf, chain, indent + 1);
+				}
+			}
+			return;
 		case TYPEDEF:
 		case SEQ:
-			// These don't normally appear inside expressions, but if they do
-			// (e.g. as the body of a function or a desugarer artifact), wrap
-			// them in a parenthesised block.
-			buf.append("/* unexpected " );
-			buf.append(string::tformat("%d", e.type.ordinal));
-			buf.append(" */");
+			// Block expression — emit as { ... }
+			buf.append("{\n");
+			for (int i = 0; i < e.children.len; i++)
+			{
+				fmt_indent(buf, indent + 1);
+				fmt_expr(buf, e.children[i], indent + 1);
+				if (i < e.children.len - 1) buf.append("\n");
+			}
+			fmt_indent(buf, indent);
+			buf.append("\n}");
 			return;
 	}
 }
