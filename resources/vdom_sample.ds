@@ -2,16 +2,16 @@
 // function is the only constructor; the tag name lives in the `name`
 // attribute so the same constructor handles every tag.
 
-let h = fn(attrs, kids) {
+fn h(attrs, kids) {
   { name: attrs.name, attrs: attrs, kids: kids }
 }
 
-let join = fn(rend, xs) {
+fn join(rend, xs) {
   if len(xs) === 0 then ""
   else rend(xs[0]) + join(rend, xs[1..])
 }
 
-let render = fn(v) {
+fn render(v) {
   if v.name === "text" then v.kids[0]
   else "<" + v.name + ">" + join(render, v.kids) + "</" + v.name + ">"
 }

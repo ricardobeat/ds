@@ -1,0 +1,71 @@
+// A small "standard library" built from the language primitives.
+// Demonstrates composing recursion, arrays, and closures.
+// Note: push mutates in-place (returns nil), so we use the
+// accumulator pattern with numbers/strings instead of array building.
+
+// ── fold over an array ───────────────────────────────────────────
+
+fn fold(arr, f, i, acc) {
+  if i === len(arr) then acc
+  else fold(arr, f, i + 1, f(acc, arr[i]))
+}
+
+fn sum(arr) {
+  fold(arr, fn(a, b) { a + b }, 0, 0)
+}
+
+fn product(arr) {
+  fold(arr, fn(a, b) { a * b }, 0, 1)
+}
+
+// ── search ───────────────────────────────────────────────────────
+
+fn find(arr, pred, i) {
+  if i === len(arr) then nil
+  else if pred(arr[i]) then arr[i]
+  else find(arr, pred, i + 1)
+}
+
+fn index_of(arr, val, i) {
+  if i === len(arr) then -1
+  else if arr[i] === val then i
+  else index_of(arr, val, i + 1)
+}
+
+// ── min / max ────────────────────────────────────────────────────
+
+fn min_of(a, b) { if a < b then a else b }
+fn max_of(a, b) { if a > b then a else b }
+
+fn min_arr(arr, i, best) {
+  if i === len(arr) then best
+  else min_arr(arr, i + 1, min_of(best, arr[i]))
+}
+
+fn max_arr(arr, i, best) {
+  if i === len(arr) then best
+  else max_arr(arr, i + 1, max_of(best, arr[i]))
+}
+
+// ── string join ──────────────────────────────────────────────────
+
+fn join(arr, sep, i, acc) {
+  if i === len(arr) then acc
+  else if i === 0 then join(arr, sep, i + 1, arr[i])
+  else join(arr, sep, i + 1, acc + sep + arr[i])
+}
+
+// ── use them ─────────────────────────────────────────────────────
+
+let nums = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+{
+  sum_1_to_10: sum(nums),
+  factorial_5: product([1, 2, 3, 4, 5]),
+  first_big: find(nums, fn(n) { n * n > 50 }, 0),
+  index_of_7: index_of(nums, 7, 0),
+  index_of_99: index_of(nums, 99, 0),
+  min: min_arr(nums, 0, nums[0]),
+  max: max_arr(nums, 0, nums[0]),
+  joined: join(["one", "two", "three"], ", ", 0, "")
+}

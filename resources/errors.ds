@@ -1,0 +1,32 @@
+// Error handling with try/catch.
+// throw is an expression; try catches and binds the thrown value.
+// The catch handler is a bare expression (no braces).
+
+fn safe_div(a, b) {
+  if b === 0 then throw "division by zero"
+  else a / b
+}
+
+let result1 = safe_div(10, 3)
+
+let result2 = try safe_div(10, 0) catch e "error: " + e
+
+// nested try
+let result3 = try (try throw "oops" catch e throw "rethrown: " + e) catch e e
+
+// type guard: throw on bad input
+fn ensure_number(x) {
+  if is_number(x) then x
+  else throw "expected a number, got something else"
+}
+
+let good = ensure_number(42)
+let bad = try ensure_number("hello") catch e e
+
+{
+  div_ok: result1,
+  div_by_zero: result2,
+  nested_catch: result3,
+  good: good,
+  bad: bad
+}

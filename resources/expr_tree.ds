@@ -1,0 +1,39 @@
+// Pattern matching with match (Rung 2).
+// match dispatches on the __tag field of a tagged record.
+// Arms use -> (not =>). Commas between arms are optional.
+
+// Build tagged values manually
+fn mk_num(n) { { __tag: "Num", __val: { value: n } } }
+fn mk_add(l, r) { { __tag: "Add", __val: { left: l, right: r } } }
+fn mk_mul(l, r) { { __tag: "Mul", __val: { left: l, right: r } } }
+
+// Evaluate an expression tree
+fn eval_expr(e) {
+  match e {
+    Num(n) -> n.value
+    Add(a) -> eval_expr(a.left) + eval_expr(a.right)
+    Mul(m) -> eval_expr(m.left) * eval_expr(m.right)
+  }
+}
+
+// Build: (2 + 3) * (4 + 5)
+let expr = mk_mul(
+  mk_add(mk_num(2), mk_num(3)),
+  mk_add(mk_num(4), mk_num(5))
+)
+
+let result = eval_expr(expr)
+
+// Flatten to a string representation
+fn to_string(e) {
+  match e {
+    Num(n) -> "n"
+    Add(a) -> "(" + to_string(a.left) + " + " + to_string(a.right) + ")"
+    Mul(m) -> "(" + to_string(m.left) + " * " + to_string(m.right) + ")"
+  }
+}
+
+{
+  value: result,
+  repr: to_string(expr)
+}

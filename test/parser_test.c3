@@ -213,3 +213,31 @@ greetBoth(alice, bob)`;
 	assert(is_str(v));
 	assert(*as_str(v) == "hi, I'm Alice and hi, I'm Bob");
 }
+
+fn void test_named_fn_basic() @test
+{
+	// fn add(a, b) { a + b }; add(3, 4)  =>  7
+	Value v = run_parsed("fn add(a, b) { a + b }; add(3, 4)");
+	assert(as_num(v) == 7.0);
+}
+
+fn void test_named_fn_recursion() @test
+{
+	// fn fact(n) { if n === 0 then 1 else n * fact(n - 1) }; fact(5)  =>  120
+	Value v = run_parsed("fn fact(n) { if n === 0 then 1 else n * fact(n - 1) }; fact(5)");
+	assert(as_num(v) == 120.0);
+}
+
+fn void test_named_fn_in_let_init() @test
+{
+	// Named fn at expression position: let f = fn id(x) { x }; f(42)  =>  42
+	Value v = run_parsed("let f = fn id(x) { x }; f(42)");
+	assert(as_num(v) == 42.0);
+}
+
+fn void test_named_fn_with_type_annotations() @test
+{
+	// fn add(a: Number, b: Number) { a + b }; add(3, 4)  =>  7
+	Value v = run_parsed("fn add(a: Number, b: Number) { a + b }; add(3, 4)");
+	assert(as_num(v) == 7.0);
+}

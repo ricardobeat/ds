@@ -333,7 +333,7 @@ fn void lex_init(Lexer* l, String src)
 //   primary  := NUM | STR | "true"|"false"|"nil" | IDENT
 //             | "(" expr ")"
 //             | record_literal | array_literal
-//             | "fn" "(" params? ")" ("->" type)? expr
+//             | "fn" IDENT? "(" params? ")" ("->" type)? expr
 //             | "if" expr "then" expr "else" expr
 //             | "throw" expr
 //             | "try" expr "catch" IDENT expr
@@ -978,6 +978,79 @@ fn AstNode* parse_array_lit(Parser* p)
 	return make_array(items);
 }
 
+// Shared helper: parse "(params) [-> ret_type] body" after "fn" has been consumed.
+// Returns LAMBDA or LAMBDA_T.
+fn AstNode* parse_lambda_params_and_body(Parser* p)
+{
+	if (!parser_accept(p, TK_LPAREN))
+	{
+		parser_set_error(p, "expected '(' after 'fn'");
+		return make_lit(mk_nil());
+	}
+	String[] pnames = {};
+	Type*[] ptypes = {};
+	int pn = 0;
+	if (!parser_check(p, TK_RPAREN))
+	{
+		for (;;)
+		{
+			if (!parser_check(p, TK_IDENT))
+			{
+				parser_set_error(p, "expected parameter name");
+				return make_lit(mk_nil());
+			}
+			String name = parser_cur(p).text;
+			parser_advance(p);
+			Type* pt = null;
+			if (parser_accept(p, TK_COLON))
+			{
+				pt = parse_type(p);
+				if (pt == null) return make_lit(mk_nil());
+			}
+			String[] npn = mem::talloc_array(String, (sz)(pn + 1));
+			Type*[] npt = mem::talloc_array(Type*, (sz)(pn + 1));
+			for (int i = 0; i < pn; i++) { npn[i] = pnames[i]; npt[i] = ptypes[i]; }
+			npn[pn] = name;
+			npt[pn] = pt;
+			pnames = npn;
+			ptypes = npt;
+			pn++;
+			if (parser_accept(p, TK_COMMA)) continue;
+			break;
+		}
+	}
+	if (!parser_accept(p, TK_RPAREN))
+	{
+		parser_set_error(p, "expected ')' to close parameter list");
+		return make_lit(mk_nil());
+	}
+	Type* ret = null;
+	if (parser_accept(p, TK_ARROW))
+	{
+		ret = parse_type(p);
+		if (ret == null) return make_lit(mk_nil());
+	}
+	AstNode* body;
+	if (parser_check(p, TK_LBRACE))
+	{
+		parser_advance(p);
+		body = parse_or(p);
+		if (p.error) return body;
+		if (!parser_accept(p, TK_RBRACE))
+		{
+			parser_set_error(p, "expected '}' to close function body");
+			return body;
+		}
+	}
+	else
+	{
+		body = parse_or(p);
+		if (p.error) return body;
+	}
+	if (ret != null) return make_typed_lambda(pnames, ptypes, ret, body);
+	return make_lambda(pnames, body);
+}
+
 fn AstNode* parse_primary(Parser* p)
 {
 	Token t = parser_cur(p);
@@ -1019,75 +1092,19 @@ fn AstNode* parse_primary(Parser* p)
 			return parse_array_lit(p);
 		case TK_KW_FN:
 			parser_advance(p);
-			if (!parser_accept(p, TK_LPAREN))
+			// fn IDENT(...) — named function at expression position; name is
+			// visible inside the body (enables recursion).  Wrapped in LetRec
+			// so the expression evaluates to the closure via Var(name).
+			if (parser_check(p, TK_IDENT))
 			{
-				parser_set_error(p, "expected '(' after 'fn'");
-				return make_lit(mk_nil());
-			}
-			String[] pnames = {};
-			Type*[] ptypes = {};
-			int pn = 0;
-			if (!parser_check(p, TK_RPAREN))
-			{
-				for (;;)
-				{
-					if (!parser_check(p, TK_IDENT))
-					{
-						parser_set_error(p, "expected parameter name");
-						return make_lit(mk_nil());
-					}
-					String name = parser_cur(p).text;
-					parser_advance(p);
-					Type* pt = null;
-					if (parser_accept(p, TK_COLON))
-					{
-						pt = parse_type(p);
-						if (pt == null) return make_lit(mk_nil());
-					}
-					String[] npn = mem::talloc_array(String, (sz)(pn + 1));
-					Type*[] npt = mem::talloc_array(Type*, (sz)(pn + 1));
-					for (int i = 0; i < pn; i++) { npn[i] = pnames[i]; npt[i] = ptypes[i]; }
-					npn[pn] = name;
-					npt[pn] = pt;
-					pnames = npn;
-					ptypes = npt;
-					pn++;
-					if (parser_accept(p, TK_COMMA)) continue;
-					break;
-				}
-			}
-			if (!parser_accept(p, TK_RPAREN))
-			{
-				parser_set_error(p, "expected ')' to close parameter list");
-				return make_lit(mk_nil());
-			}
-			Type* ret = null;
-			if (parser_accept(p, TK_ARROW))
-			{
-				ret = parse_type(p);
-				if (ret == null) return make_lit(mk_nil());
-			}
-			// Function body: either a single expression, or `{ expr }` for
-			// readability.  The braced form is just a wrapper.
-			AstNode* body;
-			if (parser_check(p, TK_LBRACE))
-			{
+				String name = parser_cur(p).text;
 				parser_advance(p);
-				body = parse_or(p);
-				if (p.error) return body;
-				if (!parser_accept(p, TK_RBRACE))
-				{
-					parser_set_error(p, "expected '}' to close function body");
-					return body;
-				}
+				AstNode* lambda = parse_lambda_params_and_body(p);
+				if (p.error) return lambda;
+				return make_letrec(name, lambda, make_var(name));
 			}
-			else
-			{
-				body = parse_or(p);
-				if (p.error) return body;
-			}
-			if (ret != null) return make_typed_lambda(pnames, ptypes, ret, body);
-			return make_lambda(pnames, body);
+			// fn(...) — anonymous lambda
+			return parse_lambda_params_and_body(p);
 		case TK_KW_IF:
 			parser_advance(p);
 			AstNode* c = parse_or(p);
@@ -1234,6 +1251,17 @@ fn AstNode* parse_toplevel(Parser* p)
 		AstNode* body = make_lit(mk_nil());
 		if (ann != null) return make_typed_let(name, ann, init, body);
 		return make_letrec(name, init, body);
+	}
+	if (parser_check(p, TK_KW_FN) && lex_peek(p.lex).kind == TK_IDENT)
+	{
+		parser_advance(p);
+		String name = parser_cur(p).text;
+		parser_advance(p);
+		AstNode* lambda = parse_lambda_params_and_body(p);
+		if (p.error) return lambda;
+		parser_accept(p, TK_SEMI);
+		AstNode* body = make_lit(mk_nil());
+		return make_letrec(name, lambda, body);
 	}
 	AstNode* e = parse_or(p);
 	parser_accept(p, TK_SEMI);

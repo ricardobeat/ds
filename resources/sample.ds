@@ -14,7 +14,7 @@ let bob = {
   greet: fn(self) { "yo, I'm " + self.name }
 }
 
-let greetOlder = fn(a, b) {
+fn greetOlder(a, b) {
   if a.age > b.age then a.greet() + " (older)" else b.greet() + " (older)"
 }
 

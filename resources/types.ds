@@ -1,0 +1,37 @@
+// Type annotations (Rung 1). Annotations are boundary checks that
+// desugar to runtime if/throw — zero cost when not violated.
+
+// Typed function: number -> number (use -> for return type)
+fn double(x: Number) -> Number {
+  x * 2
+}
+
+// Typed record constraint
+fn origin(p: { x: Number, y: Number }) -> Number {
+  p.x * p.x + p.y * p.y
+}
+
+// Good calls
+let a = double(21)
+let b = origin({ x: 3, y: 4 })
+
+// Type check catches bad input at the boundary
+let bad_call = try double("hello") catch e e
+
+// is_number, is_string, etc. — runtime type predicates
+let checks = {
+  is_number_42: is_number(42),
+  is_number_str: is_number("no"),
+  is_string_hi: is_string("hi"),
+  is_bool_true: is_bool(true),
+  is_array_empty: is_array([]),
+  is_record_obj: is_record({ x: 1 }),
+  is_nil_val: is_nil(nil)
+}
+
+{
+  doubled: a,
+  distance_sq: b,
+  bad_call: bad_call,
+  checks: checks
+}

@@ -1,0 +1,44 @@
+// Records: the one keyed aggregate. Field access, nesting, methods.
+
+let person = {
+  name: "Alice",
+  age: 30,
+  address: {
+    city: "Portland",
+    zip: "97201"
+  }
+}
+
+// dot access
+let city = person.address.city
+
+// records as "objects" with method fields (Go-style explicit self)
+let counter = {
+  count: 0,
+  inc: fn(self, n) { { count: self.count + n, inc: self.inc, reset: self.reset } },
+  reset: fn(self) { { count: 0, inc: self.inc, reset: self.reset } }
+}
+
+let c1 = counter.inc(5)
+let c2 = c1.inc(3)
+let after_inc = c2.count
+let c3 = c2.reset()
+let after_reset = c3.count
+
+// has_field: check for a key
+let has_name = has_field(person, "name")
+let has_zzz = has_field(person, "zzz")
+
+// build records from scratch
+fn make_point(x, y) { { x: x, y: y } }
+let p = make_point(3, 4)
+let dist_sq = p.x * p.x + p.y * p.y
+
+{
+  city: city,
+  after_inc: after_inc,
+  after_reset: after_reset,
+  has_name: has_name,
+  has_zzz: has_zzz,
+  distance_sq: dist_sq
+}

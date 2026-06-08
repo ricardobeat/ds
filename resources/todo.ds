@@ -1,0 +1,38 @@
+// A tiny "todo list" demonstrating records-as-objects.
+// Since Set (obj.field = val) is not in the surface parser,
+// we build records with the right values from the start.
+
+fn make_item(text, done) {
+  { text: text, done: done }
+}
+
+let items = [
+  make_item("Milk", true),
+  make_item("Bread", false),
+  make_item("Eggs", true),
+  make_item("Butter", false)
+]
+
+// Count remaining (undone) items
+fn count_undone(arr, i, acc) {
+  if i === len(arr) then acc
+  else if arr[i].done then count_undone(arr, i + 1, acc)
+  else count_undone(arr, i + 1, acc + 1)
+}
+
+let remaining = count_undone(items, 0, 0)
+
+// Collect undone item texts
+fn collect_undone(arr, i, acc) {
+  if i === len(arr) then acc
+  else if arr[i].done then collect_undone(arr, i + 1, acc)
+  else collect_undone(arr, i + 1, acc + arr[i].text + ", ")
+}
+
+let undone_list = collect_undone(items, 0, "")
+
+{
+  remaining: remaining,
+  total: len(items),
+  undone: undone_list
+}

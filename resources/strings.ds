@@ -1,0 +1,42 @@
+// Strings: concatenation, comparison, building with recursion.
+// Strings are immutable UTF-8. The + operator concatenates.
+
+let hello = "Hello"
+let world = "World"
+let greeting = hello + ", " + world + "!"
+
+// comparison is strict equality
+let same = "foo" === "foo"
+let diff = "foo" === "bar"
+
+// build strings with recursion
+fn join(arr, sep, i, acc) {
+  if i === len(arr) then acc
+  else if i === 0 then join(arr, sep, i + 1, arr[i])
+  else join(arr, sep, i + 1, acc + sep + arr[i])
+}
+
+let words = ["one", "two", "three"]
+let joined = join(words, ", ", 0, "")
+
+// repeat a string n times
+fn repeat(s, n, acc) {
+  if n === 0 then acc
+  else repeat(s, n - 1, acc + s)
+}
+
+let padded = repeat(".", 8, "") + "hi" + repeat(".", 8, "")
+
+// format a key-value pair
+fn format_entry(key, val) {
+  key + ": " + val
+}
+
+{
+  greeting: greeting,
+  same: same,
+  diff: diff,
+  joined: joined,
+  padded: padded,
+  entry: format_entry("name", "Alice")
+}

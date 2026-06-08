@@ -7,9 +7,9 @@
 // record passed as the first argument; children (whitespace or comma
 // separated) are collected into an array as the second argument.
 
-let h1  = fn(attrs, text)  { { tag: "h1",        attrs: attrs, text: text } }
-let p   = fn(attrs, text)  { { tag: "p",         attrs: attrs, text: text } }
-let div = fn(attrs, kids)  { { tag: "div",       attrs: attrs, kids: kids } }
+fn h1(attrs, text)  { { tag: "h1",        attrs: attrs, text: text } }
+fn p(attrs, text)   { { tag: "p",         attrs: attrs, text: text } }
+fn div(attrs, kids)  { { tag: "div",       attrs: attrs, kids: kids } }
 
 let page = <div class="container">
   <h1>"Hello, elements!"</h1>

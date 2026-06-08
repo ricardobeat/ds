@@ -1,0 +1,45 @@
+// Boolean logic and conditionals. Everything is an expression.
+
+let x = 42
+
+// if/then/else is an expression — it returns a value
+let label = if x > 100 then "big"
+            else if x > 10 then "medium"
+            else "small"
+
+// logical operators: and, or
+let a = true and false
+let b = true or false
+
+// comparison chains
+let in_range = x > 10 and x < 100
+
+// absolute value
+fn abs(n) {
+  if n < 0 then 0 - n else n
+}
+
+fn clamp(val, lo, hi) {
+  if val < lo then lo
+  else if val > hi then hi
+  else val
+}
+
+// truthiness: only nil and false are falsy
+let demo = {
+  zero_is_truthy: if 0 then true else false,
+  empty_str_truthy: if "" then true else false,
+  nil_is_falsy: if nil then true else false,
+  false_is_falsy: if false then true else false
+}
+
+{
+  label: label,
+  and_result: a,
+  or_result: b,
+  in_range: in_range,
+  abs_neg: abs(-17),
+  abs_pos: abs(17),
+  clamped: clamp(150, 0, 100),
+  truthiness: demo
+}

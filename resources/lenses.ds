@@ -1,0 +1,51 @@
+// Functional update patterns — "updating" nested records immutably
+// by rebuilding at each level. Since Set requires mutation (and the
+// surface language has no obj.field = value syntax), we construct
+// fresh records with the desired changes.
+
+let user = {
+  name: "Alice",
+  settings: {
+    theme: "dark",
+    font_size: 14
+  }
+}
+
+// "Update" the theme by rebuilding the record path.
+let updated = {
+  name: user.name,
+  settings: {
+    theme: "light",
+    font_size: user.settings.font_size
+  }
+}
+
+// Generic "set field" via rebuilding (only works for known shapes).
+fn set_name(rec, val) {
+  {
+    name: val,
+    settings: rec.settings
+  }
+}
+
+fn set_theme(rec, val) {
+  {
+    name: rec.name,
+    settings: {
+      theme: val,
+      font_size: rec.settings.font_size
+    }
+  }
+}
+
+// over: apply a function to a field's value and rebuild
+fn over_name(rec, f) {
+  set_name(rec, f(rec.name))
+}
+
+{
+  original_theme: user.settings.theme,
+  updated_theme: updated.settings.theme,
+  new_name: set_name(user, "Bob").name,
+  over_result: over_name(user, fn(s) { s }).name
+}
