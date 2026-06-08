@@ -11,11 +11,13 @@
 "try" @keyword
 "catch" @keyword
 "match" @keyword
-"type" @keyword
 "and" @keyword
 "or" @keyword
-"from" @keyword
-"import" @keyword
+
+; ── Import / type keywords (qualified to avoid Zed parser issues) ─
+(import_declaration "from" @keyword)
+(import_declaration "import" @keyword)
+(type_declaration "type" @keyword)
 
 ; ── Literals ──────────────────────────────────────────────────
 (string) @string
