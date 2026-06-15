@@ -170,6 +170,12 @@ fn int engine_record_len(Value v) {
 
 // ── Calling DS closures from C3 ──────────────────────────────────
 
+// engine_begin_render resets the JSX element slot counter for a new render pass.
+// Call this before invoking the DS view function each frame.
+fn void engine_begin_render() {
+	g_element_slot = 0;
+}
+
 // engine_call invokes a DS closure value with the given arguments.
 // Goes through eval() so TCO trampolining is handled correctly.
 fn EvalResult engine_call(Value fn_val, Value[] args) {

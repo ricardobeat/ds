@@ -219,6 +219,7 @@ fn milktea::Cmd DsModel.update(DsModel* self, milktea::Msg msg) @dynamic {
 }
 
 fn milktea::View DsModel.view(DsModel* self) @dynamic {
+	engine::engine_begin_render();
 	Value view_fn = rec_get(g_model_rec, "view");
 	EvalResult r  = engine::engine_call(view_fn, { g_state });
 	if (r.thrown) {

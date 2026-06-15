@@ -749,9 +749,9 @@ fn AstNode* parse_element(Parser* p)
 		if (!parser_accept(p, TK_GT))
 		{
 			parser_set_error(p, "expected '>' to close self-closing element");
-			return make_call(make_var(tag), { attrs });
+			return make_call(make_prim_node("__element"), { make_var(tag), attrs });
 		}
-		return make_call(make_var(tag), { attrs });
+		return make_call(make_prim_node("__element"), { make_var(tag), attrs });
 	}
 	if (!parser_accept(p, TK_GT))
 	{
@@ -800,12 +800,14 @@ fn AstNode* parse_element(Parser* p)
 	{
 		parser_set_error(p, "expected '>' to close closing tag");
 	}
-	// Build the call: tag(attrs, [child1, child2, ...]).
-	if (cn == 0)
-	{
-		return make_call(make_var(tag), { attrs });
-	}
-	return make_call(make_var(tag), { attrs, make_array(children) });
+	// Build the call: __element(TagFn, attrs, child0, child1, ...).
+	// __element handles memoization by slot; the component function receives
+	// (props) or (props, [children]) depending on child count.
+	AstNode*[] elem_args = mem::talloc_array(AstNode*, (sz)(2 + cn));
+	elem_args[0] = make_var(tag);
+	elem_args[1] = attrs;
+	for (int i = 0; i < cn; i++) elem_args[2 + i] = children[i];
+	return make_call(make_prim_node("__element"), elem_args[:2 + cn]);
 }
 
 fn AstNode* parse_postfix(Parser* p)

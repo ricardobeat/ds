@@ -1267,7 +1267,20 @@ bool   g_active_is_derived;
 Effect* g_effects;
 
 // Element stable-ref state.
-int g_element_slot;
+// Slots are assigned in render-tree order (depth-first). Each slot caches the
+// last component result and an input fingerprint (props Value + children Values).
+// If the fingerprint matches on the next render pass, the cached result is returned
+// without re-invoking the component function.
+const int MAX_ELEMENT_SLOTS = 4096;
+
+struct ElementSlot {
+	bool     used;
+	Value    result;        // last return value from the component
+	Value    fingerprint;   // NaN-boxed: XOR of all input Values (props + children)
+}
+
+int          g_element_slot;
+ElementSlot[MAX_ELEMENT_SLOTS] g_element_slots;
 
 fn void dep_push(DepNode** list, Value target) {
 	// Avoid duplicate entries — check if target already in list.
@@ -1687,35 +1700,57 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 		}
 		case "__element":
 		{
-			// __element(tag, props, ...children) => { __tag, __props, __children, __id }
-			// Provides stable identity for JSX-like elements.
+			// __element(component_fn, props, child0, child1, ...) =>
+			//   calls component_fn(props, [children]) and caches the result by slot.
+			// On re-render, if the input fingerprint (XOR of all arg Values) is
+			// unchanged the cached result is returned without re-invoking the function.
 			if (args.len < 2) {
-				return { .thrown = true, .value = mk_str("type error: __element expects at least (tag, props)") };
+				return { .thrown = true, .value = mk_str("type error: __element expects at least (fn, props)") };
 			}
-			Value tag = args[0];
-			Value props = args[1];
-			// Build children array from remaining args.
-			int nkids = (int)args.len - 2;
-			Value[] kids = mem::talloc_array(Value, (sz)nkids);
-			for (int i = 0; i < nkids; i++) kids[i] = args[i + 2];
-			Array* kids_arr = new_array();
-			kids_arr.items = kids;
 			int slot = g_element_slot;
 			g_element_slot++;
-			// Build result record.
-			uint[] atom_keys = mem::talloc_array(uint, 4);
-			atom_keys[0] = intern("__tag"); atom_keys[1] = intern("__props");
-			atom_keys[2] = intern("__children"); atom_keys[3] = intern("__id");
-			Value[] vals = mem::talloc_array(Value, 4);
-			vals[0] = tag; vals[1] = props; vals[2] = val_arr(kids_arr); vals[3] = mk_num((double)slot);
-			Record* r = new_record();
-			r.keys = atom_keys;
-			r.values = vals;
-			return { .value = val_rec(r) };
+			if (slot >= MAX_ELEMENT_SLOTS) {
+				return { .thrown = true, .value = mk_str("too many JSX elements (> MAX_ELEMENT_SLOTS)") };
+			}
+
+			// Compute fingerprint: XOR of all input Value bits.
+			ulong fp = 0;
+			for (sz i = 0; i < args.len; i++) fp ^= (ulong)args[i];
+			Value fingerprint = (Value)fp;
+
+			ElementSlot* sl = &g_element_slots[slot];
+			if (sl.used && sl.fingerprint == fingerprint) {
+				return { .value = sl.result };
+			}
+
+			// Call the component: component_fn(props) or component_fn(props, [children]).
+			Value fn_val = args[0];
+			Value props   = args[1];
+			int nkids = (int)args.len - 2;
+			Value call_result;
+			if (nkids == 0) {
+				EvalResult r = call_fn(fn_val, { props });
+				if (r.thrown) return r;
+				call_result = r.value;
+			} else {
+				Value[] kids = mem::talloc_array(Value, (sz)nkids);
+				for (int i = 0; i < nkids; i++) kids[i] = args[i + 2];
+				Array* kids_arr = new_array();
+				kids_arr.items = kids;
+				EvalResult r = call_fn(fn_val, { props, val_arr(kids_arr) });
+				if (r.thrown) return r;
+				call_result = r.value;
+			}
+
+			sl.used        = true;
+			sl.fingerprint = fingerprint;
+			sl.result      = call_result;
+			return { .value = call_result };
 		}
 		case "__begin_render":
 		{
 			// Reset the element cursor for a new render pass.
+			// The slot table is preserved so fingerprints can be compared.
 			g_element_slot = 0;
 			return { .value = mk_nil() };
 		}

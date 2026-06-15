@@ -15,6 +15,8 @@ import std::io;
 
 fn Value run_parsed(String src)
 {
+	g_element_slot = 0;
+	g_element_slots = {};
 	Env* env = make_builtin_env();
 	ParseResult pr = parse_source(src);
 	if (pr.error)
