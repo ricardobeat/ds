@@ -488,12 +488,18 @@ fn Value mk_prim(String n) {
 	return val_prim(p);
 }
 
+ulong g_alloc_arrays;
+ulong g_alloc_records;
+bool  g_alloc_tracking;
+
 fn Array* new_array() {
+	if (g_alloc_tracking) g_alloc_arrays++;
 	Array* a = mem::new(Array);
 	a.refcount = 1;
 	return a;
 }
 fn Record* new_record() {
+	if (g_alloc_tracking) g_alloc_records++;
 	Record* r = mem::new(Record);
 	r.refcount = 1;
 	return r;

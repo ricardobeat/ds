@@ -176,6 +176,17 @@ fn void engine_begin_render() {
 	g_element_slot = 0;
 }
 
+// Allocation tracking — count heap Array/Record allocations across render passes.
+fn void engine_alloc_reset() {
+	g_alloc_arrays   = 0;
+	g_alloc_records  = 0;
+	g_alloc_tracking = true;
+}
+fn void engine_alloc_stop()           { g_alloc_tracking = false; }
+fn ulong engine_alloc_arrays()        => g_alloc_arrays;
+fn ulong engine_alloc_records()       => g_alloc_records;
+fn ulong engine_alloc_total()         => g_alloc_arrays + g_alloc_records;
+
 // engine_call invokes a DS closure value with the given arguments.
 // Goes through eval() so TCO trampolining is handled correctly.
 fn EvalResult engine_call(Value fn_val, Value[] args) {

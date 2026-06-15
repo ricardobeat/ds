@@ -728,6 +728,16 @@ fn AstNode* parse_element(Parser* p)
 			// Allow dot-access expressions like state.width
 			v = parse_postfix(p);
 		}
+		else if (parser_accept(p, TK_LPAREN))
+		{
+			// Allow arbitrary expressions in parens: attr=(expr)
+			v = parse_expr(p);
+			if (!parser_accept(p, TK_RPAREN))
+			{
+				parser_set_error(p, "expected ')' after JSX attribute expression");
+				return make_call(make_var(tag), { make_record({}, {}) });
+			}
+		}
 		else
 		{
 			parser_set_error(p, "expected attribute value (string, number, bool, or ident)");
