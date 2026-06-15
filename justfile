@@ -23,6 +23,10 @@ test:
 bench: build
     ./benchmarks/run.sh
 
+# Build and run the todo TUI app (DS-scripted)
+todo:
+    c3c build todo && ./build/todo
+
 # Build and run the raylib 3D demo
 raylib: build-raylib-plugin
     ./build/engine run examples/raylib_demo.ds

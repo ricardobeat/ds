@@ -1,4 +1,7 @@
 {
+  "dependency-search-paths": ["lib"],
+  "dependencies": ["boba"],
+
   "langrev": "1",
   "warnings": ["no-unused"],
   "dependency-search-paths": ["lib"],
@@ -36,6 +39,15 @@
         "src/main.c3", "src/parser.c3", "src/formatter.c3",
         "src/compiler.c3", "src/chunk.c3", "src/vm.c3", "src/embed.c3",
         "example/src/main.c3"
+      ]
+    },
+    "todo": {
+      "type": "executable",
+      "dependencies": ["milktea", "glaze", "xray"],
+      "sources": [
+        "src/main.c3", "src/parser.c3", "src/formatter.c3",
+        "src/compiler.c3", "src/chunk.c3", "src/vm.c3", "src/embed.c3",
+        "example/todo/main.c3"
       ]
     }
   },
