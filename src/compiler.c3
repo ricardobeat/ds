@@ -444,6 +444,23 @@ fn void compile_expr(Compiler* c, AstNode* node, bool tail_pos) {
 			end_scope(c);
 			patch_jump(c.chunk, skip_handler);
 
+		case NULLCOAL:
+			// try lhs; if thrown or nil, eval rhs
+			int nc_handler = emit_jump(c.chunk, (char)Op.PUSH_HANDLER, line);
+			compile_expr(c, node.children[0], false);
+			emit_op(c.chunk, (char)Op.POP_HANDLER, line);
+			emit_op(c.chunk, (char)Op.IS_NIL, line);
+			int nc_if_nil = emit_jump(c.chunk, (char)Op.JUMP_IF_TRUE, line);
+			int nc_skip_rhs = emit_jump(c.chunk, (char)Op.JUMP, line);
+			// thrown path: discard error, fall through to rhs
+			patch_jump(c.chunk, nc_handler);
+			emit_op(c.chunk, (char)Op.POP, line);
+			// nil path
+			patch_jump(c.chunk, nc_if_nil);
+			emit_op(c.chunk, (char)Op.POP, line); // pop nil or IS_NIL true
+			compile_expr(c, node.children[1], tail_pos);
+			patch_jump(c.chunk, nc_skip_rhs);
+
 		case PRIM:
 			int prim_idx = add_constant(c.chunk, mk_prim(node.name));
 			emit_op(c.chunk, (char)Op.PUSH_CONST, line);
@@ -457,6 +474,7 @@ fn void compile_expr(Compiler* c, AstNode* node, bool tail_pos) {
 		case TYPEDEF:
 		case CONSTRUCT:
 		case MATCH:
+		case PMATCH:
 			io::printfn("compile error: surface node reached the compiler; desugar first");
 	}
 }

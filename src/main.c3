@@ -375,6 +375,7 @@ enum NodeType : char {
 	ARRAY_LIT,
 	THROW,
 	TRY,
+	NULLCOAL,  // a ?? b: rhs when lhs throws or is nil
 	PRIM,
 	LETREC,
 	SEQ,        // surface: sequential evaluation; desugars to ignored-binding lambdas
@@ -389,6 +390,7 @@ enum NodeType : char {
 	TYPEDEF,   // surface: register a type name in tenv, emit body
 	CONSTRUCT, // surface: tagged value; desugars to Record with __tag/__val
 	MATCH,     // surface: pattern match; desugars to If-chain on __tag
+	PMATCH,    // surface: primitive match on literals; desugars to If-chain on ===
 }
 
 struct TypeDefEntry {
@@ -410,6 +412,7 @@ struct AstNode {
 	Type*[] param_types;
 	Type* ret_type;
 	Type* ann_type; // LET_T: type of the initializer
+	long line; // source line (1-indexed), 0 = unknown
 }
 
 // ============================================================================
@@ -662,6 +665,16 @@ fn AstNode* make_try(AstNode* body, String cname, AstNode* handler) {
 	return n;
 }
 
+fn AstNode* make_nullcoal(AstNode* lhs, AstNode* rhs) {
+	AstNode* n = mem::tnew(AstNode);
+	n.type = NULLCOAL;
+	AstNode*[] kids = mem::talloc_array(AstNode*, 2);
+	kids[0] = lhs;
+	kids[1] = rhs;
+	n.children = kids;
+	return n;
+}
+
 fn AstNode* make_prim_node(String name) {
 	AstNode* n = mem::tnew(AstNode);
 	n.type = PRIM;
@@ -800,6 +813,26 @@ fn AstNode* make_match(AstNode* scrut, String[] tags, String[] binds, AstNode*[]
 	}
 	n.names = nm;
 	n.name_ids = nm_ids;
+	n.children = kids;
+	return n;
+}
+
+// make_pmatch: primitive match on literals or variable patterns.
+// pattern_nodes[i] is:
+//   make_lit(val)  — match by value (=== val)
+//   make_var("_")  — wildcard (catch-all)
+//   make_var(name) — variable pattern (=== name looked up in env)
+// children = [scrut, pat0, body0, pat1, body1, ...]
+fn AstNode* make_pmatch(AstNode* scrut, AstNode*[] pattern_nodes, AstNode*[] bodies) {
+	assert(pattern_nodes.len == bodies.len);
+	AstNode* n = mem::tnew(AstNode);
+	n.type = PMATCH;
+	AstNode*[] kids = mem::talloc_array(AstNode*, 1 + 2 * bodies.len);
+	kids[0] = scrut;
+	for (int i = 0; i < bodies.len; i++) {
+		kids[1 + 2 * i]     = pattern_nodes[i];
+		kids[1 + 2 * i + 1] = bodies[i];
+	}
 	n.children = kids;
 	return n;
 }
@@ -1407,6 +1440,35 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 		case "is_array":  return { .value = mk_bool(is_arr(args[0])) };
 		case "is_record": return { .value = mk_bool(is_rec(args[0])) };
 		case "is_nil":    return { .value = mk_bool(is_nil(args[0])) };
+		case "record_spread":
+		{
+			// record_spread(base, overrides)  =>  new record with base fields + overrides on top
+			if (!is_rec(args[0])) return { .thrown = true, .value = mk_str("type error: record_spread expects record as first arg") };
+			if (!is_rec(args[1])) return { .thrown = true, .value = mk_str("type error: record_spread expects record as second arg") };
+			Record* base = as_rec(args[0]);
+			Record* over = as_rec(args[1]);
+			// Count unique keys: all base keys, plus override keys not in base
+			sz total = base.keys.len + over.keys.len;
+			uint[] out_keys = mem::talloc_array(uint, total);
+			Value[] out_vals = mem::talloc_array(Value, total);
+			sz n = 0;
+			// Copy base fields, skipping any that are overridden
+			for (sz i = 0; i < base.keys.len; i++) {
+				bool overridden = false;
+				for (sz j = 0; j < over.keys.len; j++) {
+					if (base.keys[i] == over.keys[j]) { overridden = true; break; }
+				}
+				if (!overridden) { out_keys[n] = base.keys[i]; out_vals[n] = base.values[i]; n++; }
+			}
+			// Append all override fields
+			for (sz i = 0; i < over.keys.len; i++) {
+				out_keys[n] = over.keys[i]; out_vals[n] = over.values[i]; n++;
+			}
+			Record* res = new_record();
+			res.keys   = out_keys[:n];
+			res.values = out_vals[:n];
+			return { .value = val_rec(res) };
+		}
 		case "has_field":
 			if (!is_rec(args[0])) {
 				return { .thrown = true, .value = mk_str("type error: has_field expects record") };
@@ -1433,12 +1495,12 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 			if (!is_arr(args[0])) {
 				return { .thrown = true, .value = mk_str("type error: push expects array") };
 			}
-			Array* a = as_arr(args[0]);
-			Value[] grown = mem::talloc_array(Value, a.items.len + 1);
-			for (int i = 0; i < a.items.len; i++) grown[i] = a.items[i];
-			grown[a.items.len] = args[1];
-			a.items = grown;
-			return { .value = mk_nil() };
+			Array* pa = as_arr(args[0]);
+			Value[] grown = mem::talloc_array(Value, pa.items.len + 1);
+			for (int i = 0; i < pa.items.len; i++) grown[i] = pa.items[i];
+			grown[pa.items.len] = args[1];
+			pa.items = grown;
+			return { .value = args[0] };
 		case "array_all":
 
 		{
@@ -1451,7 +1513,7 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 			}
 			Array* a = as_arr(args[0]);
 			foreach (&item : a.items) {
-				EvalResult r = apply_fn(args[1], { *item });
+				EvalResult r = call_fn(args[1], { *item });
 				if (r.thrown) return r;
 				if (!truthy(r.value)) return { .value = mk_bool(false) };
 			}
@@ -1480,6 +1542,81 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 			Array* r = new_array();
 			r.items = out;
 			return { .value = val_arr(r) };
+		}
+		case "map":
+		{
+			if (!is_arr(args[0])) return { .thrown = true, .value = mk_str("type error: map expects array") };
+			if (!is_closure(args[1]) && !is_prim(args[1])) return { .thrown = true, .value = mk_str("type error: map expects function") };
+			Array* a = as_arr(args[0]);
+			Value[] out = mem::talloc_array(Value, a.items.len);
+			for (sz i = 0; i < a.items.len; i++) {
+				EvalResult r = call_fn(args[1], { a.items[i] });
+				if (r.thrown) return r;
+				out[i] = r.value;
+			}
+			Array* res = new_array();
+			res.items = out;
+			return { .value = val_arr(res) };
+		}
+		case "filter":
+		{
+			if (!is_arr(args[0])) return { .thrown = true, .value = mk_str("type error: filter expects array") };
+			if (!is_closure(args[1]) && !is_prim(args[1])) return { .thrown = true, .value = mk_str("type error: filter expects function") };
+			Array* a = as_arr(args[0]);
+			Value[] tmp = mem::talloc_array(Value, a.items.len);
+			sz n = 0;
+			for (sz i = 0; i < a.items.len; i++) {
+				EvalResult r = call_fn(args[1], { a.items[i] });
+				if (r.thrown) return r;
+				if (truthy(r.value)) tmp[n++] = a.items[i];
+			}
+			Array* res = new_array();
+			res.items = tmp[:n];
+			return { .value = val_arr(res) };
+		}
+		case "mapi":
+		{
+			if (!is_arr(args[0])) return { .thrown = true, .value = mk_str("type error: mapi expects array") };
+			if (!is_closure(args[1]) && !is_prim(args[1])) return { .thrown = true, .value = mk_str("type error: mapi expects function") };
+			Array* a = as_arr(args[0]);
+			Value[] out = mem::talloc_array(Value, a.items.len);
+			for (sz i = 0; i < a.items.len; i++) {
+				EvalResult r = call_fn(args[1], { a.items[i], mk_num((double)i) });
+				if (r.thrown) return r;
+				out[i] = r.value;
+			}
+			Array* res = new_array();
+			res.items = out;
+			return { .value = val_arr(res) };
+		}
+		case "filteri":
+		{
+			if (!is_arr(args[0])) return { .thrown = true, .value = mk_str("type error: filteri expects array") };
+			if (!is_closure(args[1]) && !is_prim(args[1])) return { .thrown = true, .value = mk_str("type error: filteri expects function") };
+			Array* a = as_arr(args[0]);
+			Value[] tmp = mem::talloc_array(Value, a.items.len);
+			sz n = 0;
+			for (sz i = 0; i < a.items.len; i++) {
+				EvalResult r = call_fn(args[1], { a.items[i], mk_num((double)i) });
+				if (r.thrown) return r;
+				if (truthy(r.value)) tmp[n++] = a.items[i];
+			}
+			Array* res = new_array();
+			res.items = tmp[:n];
+			return { .value = val_arr(res) };
+		}
+		case "reduce":
+		{
+			if (!is_arr(args[0])) return { .thrown = true, .value = mk_str("type error: reduce expects array") };
+			if (!is_closure(args[2]) && !is_prim(args[2])) return { .thrown = true, .value = mk_str("type error: reduce expects function") };
+			Array* a = as_arr(args[0]);
+			Value acc = args[1];
+			for (sz i = 0; i < a.items.len; i++) {
+				EvalResult r = call_fn(args[2], { acc, a.items[i] });
+				if (r.thrown) return r;
+				acc = r.value;
+			}
+			return { .value = acc };
 		}
 		case "print":
 			foreach (arg : args) {
@@ -1761,7 +1898,11 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 				n.children = kids;
 				return n;
 			}
-		case CALL: return desugar_with_kids(CALL, e.children, tenv);
+		case CALL: {
+			AstNode* n = desugar_with_kids(CALL, e.children, tenv);
+			n.line = e.line;
+			return n;
+		}
 		case IF: return desugar_with_kids(IF, e.children, tenv);
 		case GET: return desugar_with_kids(GET, e.children, tenv);
 		case SET: return desugar_with_kids(SET, e.children, tenv);
@@ -1780,6 +1921,7 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 			}
 		case ARRAY_LIT: return desugar_with_kids(ARRAY_LIT, e.children, tenv);
 		case THROW: return desugar_with_kids(THROW, e.children, tenv);
+		case NULLCOAL: return desugar_with_kids(NULLCOAL, e.children, tenv);
 		case TRY:
 
 			{
@@ -1950,6 +2092,33 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 				}
 				return make_call(make_lambda({ s }, chain), { scrut });
 			}
+		case PMATCH:
+
+			{
+				// children = [scrut, pat0, body0, pat1, body1, ...]
+				// pat is LIT(val) for literal patterns or VAR(name) for var/wildcard patterns.
+				// VAR("_") = wildcard catch-all; VAR(name) = compare === name in env.
+				AstNode* scrut = desugar(e.children[0], tenv);
+				String s       = gensym("_scrut");
+				int npats      = ((int)e.children.len - 1) / 2;
+				AstNode* chain = make_throw(make_lit(mk_str("non-exhaustive match")));
+				for (int i = npats - 1; i >= 0; i--) {
+					AstNode* pat  = e.children[1 + 2 * i];
+					AstNode* body = desugar(e.children[1 + 2 * i + 1], tenv);
+					bool is_wild = (pat.type == VAR && pat.name == "_") ||
+					               (pat.type == LIT && is_str(pat.literal) && *as_str(pat.literal) == "_");
+					if (is_wild) {
+						chain = body;
+					} else {
+						AstNode* eq = make_call(
+							make_prim_node("==="),
+							{ make_var(s), pat }
+						);
+						chain = make_if(eq, body, chain);
+					}
+				}
+				return make_call(make_lambda({ s }, chain), { scrut });
+			}
 	}
 }
 
@@ -1977,6 +2146,14 @@ fn EvalResult apply_fn(Value fn_val, Value[] args) {
 		return { .is_tail = true, .tail_node = c.body, .tail_env = call_env };
 	}
 	return { .thrown = true, .value = mk_str("not callable") };
+}
+
+// call_fn: apply_fn + trampoline. Use this when calling DS closures from C3
+// primitives (map, filter, etc.) where tail-call thunks must be resolved.
+fn EvalResult call_fn(Value fn_val, Value[] args) {
+	EvalResult r = apply_fn(fn_val, args);
+	if (r.is_tail) return eval(r.tail_node, r.tail_env);
+	return r;
 }
 
 // ============================================================================
@@ -2099,7 +2276,14 @@ fn EvalResult eval_step(AstNode* node, Env* env) {
 						if (is_str(av)) return { .value = val_num((double)(*as_str(av)).len) };
 					}
 				}
-				return prim_dispatch(pname, stack_buf[0:argc]);
+				EvalResult pr = prim_dispatch(pname, stack_buf[0:argc]);
+				if (pr.thrown && node.line > 0 && is_str(pr.value)) {
+					String msg = *as_str(pr.value);
+					if (msg.len < 5 || msg[0] != 'l' || msg[1] != 'i' || msg[2] != 'n' || msg[3] != 'e') {
+						pr.value = mk_str(string::tformat("line %d: %s", node.line, msg));
+					}
+				}
+				return pr;
 			}
 			// Fast path: direct VAR → Closure call — skip general eval/apply_fn.
 			if (node.children[0].type == VAR) {
@@ -2166,7 +2350,14 @@ fn EvalResult eval_step(AstNode* node, Env* env) {
 				if (a.thrown) return a;
 				args[i] = a.value;
 			}
-			return apply_fn(fn_r.value, args);
+			EvalResult r = apply_fn(fn_r.value, args);
+			if (r.thrown && node.line > 0 && is_str(r.value)) {
+				String msg = *as_str(r.value);
+				if (msg.len < 5 || msg[0] != 'l' || msg[1] != 'i' || msg[2] != 'n' || msg[3] != 'e') {
+					r.value = mk_str(string::tformat("line %d: %s", node.line, msg));
+				}
+			}
+			return r;
 		}
 		case IF:
 
@@ -2301,6 +2492,13 @@ fn EvalResult eval_step(AstNode* node, Env* env) {
 			Env* h = env_define(env, node.name_id, b.value);
 			return { .is_tail = true, .tail_node = node.children[1], .tail_env = h };
 		}
+		case NULLCOAL:
+
+		{
+			EvalResult b = eval(node.children[0], env);
+			if (!b.thrown && !is_nil(b.value)) return b;
+			return { .is_tail = true, .tail_node = node.children[1], .tail_env = env };
+		}
 		case PRIM:
 
 		{
@@ -2329,6 +2527,7 @@ fn EvalResult eval_step(AstNode* node, Env* env) {
 		case TYPEDEF:
 		case CONSTRUCT:
 		case MATCH:
+		case PMATCH:
 			return { .thrown = true, .value = mk_str("eval: surface node reached the kernel; desugar first") };
 	}
 }
@@ -2353,7 +2552,8 @@ fn Env* make_builtin_env()
 		"===", "<", ">", "<=", ">=",
 		"and", "or",
 		"is_number", "is_string", "is_bool", "is_array", "is_record", "is_nil",
-		"has_field", "len", "push", "print", "array_all", "slice",
+		"record_spread", "has_field", "len", "push", "print", "array_all", "slice",
+		"map", "filter", "reduce", "mapi", "filteri",
 		"signal", "signal_get", "signal_set", "derived", "effect",
 		"__element", "__begin_render",
 		"loadlib",

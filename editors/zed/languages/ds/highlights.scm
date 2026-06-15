@@ -40,6 +40,7 @@
 ".." @operator
 "!" @operator
 "->" @operator
+"??" @operator
 
 ; ── Signal sugar ──────────────────────────────────────────────
 "$" @punctuation
@@ -97,12 +98,38 @@
 (type_declaration
   name: (identifier) @type)
 
+; ── Functions (named) ─────────────────────────────────────────
+(fn_declaration
+  name: (identifier) @function)
+
+(fn_declaration
+  return_type: (type_name) @type)
+
+; ── Destructuring parameters ───────────────────────────────────
+(destructure_parameter
+  field: (identifier) @variable)
+
 ; ── Match ─────────────────────────────────────────────────────
 (match_arm
   tag: (upper_identifier) @constructor)
 
 (match_arm
   binding: (identifier) @variable)
+
+; ── Primitive match ────────────────────────────────────────────
+(primitive_match_arm
+  pattern: (string) @string)
+
+(primitive_match_arm
+  pattern: (number) @number)
+
+(primitive_match_arm
+  pattern: (boolean) @constant)
+
+(primitive_match_arm
+  pattern: (nil_literal) @constant)
+
+(wildcard) @variable.special
 
 ; ── Elements (JSX-like) ───────────────────────────────────────
 (element_expression

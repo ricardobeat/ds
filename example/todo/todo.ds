@@ -1,0 +1,134 @@
+// todo.ds — todo app built entirely in DS with JSX components
+
+// ── Key constants ──────────────────────────────────────────────────
+
+let k_enter     = KEY_ENTER()
+let k_backspace = KEY_BACKSPACE()
+let k_esc       = KEY_ESC()
+let k_up        = KEY_UP()
+let k_down      = KEY_DOWN()
+let k_rune      = KEY_RUNE()
+let k_ctrl_c    = KEY_CTRL_C()
+let k_delete    = KEY_DELETE()
+
+// ── App state ──────────────────────────────────────────────────────
+
+let MODE_LIST = "list"
+let MODE_ADD  = "add"
+
+let initial_state = {
+  todos:  [
+    { text: "Buy milk",           done: false },
+    { text: "Write more DS code", done: false },
+    { text: "Ship it",            done: false }
+  ],
+  cursor: 0,
+  mode:   MODE_LIST,
+  input:  "",
+  width:  80,
+  height: 24
+}
+
+// ── Pure update helpers ────────────────────────────────────────────
+
+let clamp = fn(v, lo, hi) {
+  if v < lo then lo else if v > hi then hi else v
+}
+
+let toggle_done = fn(item) { { ...item, done: !item.done } }
+
+let map_todos = fn(todos, i, f) {
+  mapi(todos, fn(item, j) { if j === i then f(item) else item })
+}
+
+let remove_at = fn(todos, idx) {
+  filteri(todos, fn(item, j) { j !== idx })
+}
+
+// ── Model ──────────────────────────────────────────────────────────
+
+let init = fn() { initial_state }
+
+fn update_list(state, { code, rune }) {
+  let n = len(state.todos)
+  match rune {
+    " " -> { ...state, todos: map_todos(state.todos, state.cursor, toggle_done) }
+    "a" -> { ...state, mode: MODE_ADD, input: "" }
+    "d" -> {
+             let todos  = remove_at(state.todos, state.cursor)
+             let cursor = clamp(state.cursor, 0, len(todos) - 1)
+             { ...state, todos: todos, cursor: cursor }
+           }
+    _   -> match code {
+             k_up   -> { ...state, cursor: clamp(state.cursor - 1, 0, n - 1) }
+             k_down -> { ...state, cursor: clamp(state.cursor + 1, 0, n - 1) }
+             _      -> state
+           }
+  }
+}
+
+fn update_add(state, { code, rune }) {
+  match code {
+    k_esc       -> { ...state, mode: MODE_LIST, input: "" }
+    k_enter     -> if string_width(state.input) > 0 then {
+                     let todos = push(state.todos, { text: state.input, done: false })
+                     { ...state, todos: todos, cursor: len(todos) - 1, mode: MODE_LIST, input: "" }
+                   } else state
+    k_backspace -> {
+                     let l = string_width(state.input)
+                     let s = if l > 0 then str_slice(state.input, 0, l - 1) else state.input
+                     { ...state, input: s }
+                   }
+    k_rune      -> { ...state, input: state.input + rune }
+    _           -> state
+  }
+}
+
+fn update(state, msg) {
+  match msg {
+    Key(k)         -> if state.mode === MODE_LIST then update_list(state, k)
+                      else if state.mode === MODE_ADD then update_add(state, k)
+                      else state
+    WindowSize(sz) -> { ...state, width: sz.width, height: sz.height }
+    Tick(_)        -> state
+    None(_)        -> state
+  }
+}
+
+// ── View ───────────────────────────────────────────────────────────
+
+let render_todo = fn(item, selected) {
+  if item.done
+    then "✓ " + item.text
+    else "○ " + item.text
+}
+
+let view = fn(state) {
+  let header =
+    <VStack gap=1>
+      <Text bold=true value="  ✓ Todo" />,
+      <Divider width=state.width />
+    </VStack>
+
+  let add_view =
+    <VStack gap=1>
+      <Text bold=true value="  New todo" />,
+      <TextInput prefix="  > " value=state.input focused=true />,
+      <StatusBar text="  Enter to add  ·  ESC to cancel" />
+    </VStack>
+
+  let list_view =
+    <VStack gap=1>
+      <List items=state.todos cursor=state.cursor render_item=render_todo />,
+      <StatusBar text="  ↑↓ move  ·  space toggle  ·  a add  ·  d delete  ·  q quit" />
+    </VStack>
+
+  <VStack gap=1>
+    header,
+    if state.mode === MODE_ADD then add_view else list_view
+  </VStack>
+}
+
+// ── Run ────────────────────────────────────────────────────────────
+
+run_model({ init: init, update: update, view: view })

@@ -196,11 +196,15 @@ fn long fmt_estimate_width(AstNode* e)
 		case TRY:
 			return 4 + fmt_estimate_width(e.children[0]) + 7
 				+ 1 + fmt_estimate_width(e.children[1]);
+		case NULLCOAL:
+			return fmt_estimate_width(e.children[0]) + 4
+				+ fmt_estimate_width(e.children[1]);
 		case LETREC:
 		case LET_T:
 		case TYPEDEF:
 		case CONSTRUCT:
 		case MATCH:
+		case PMATCH:
 		case SEQ:
 			return 100; // "big" — these are formatted multi-line anyway
 	}
@@ -519,6 +523,11 @@ fn void fmt_expr(DString* buf, AstNode* e, int indent)
 			buf.append_char(' ');
 			fmt_expr(buf, e.children[1], indent);
 			return;
+		case NULLCOAL:
+			fmt_expr(buf, e.children[0], indent);
+			buf.append(" ?? ");
+			fmt_expr(buf, e.children[1], indent);
+			return;
 		case CONSTRUCT:
 			buf.append(e.name);
 			buf.append_char('(');
@@ -530,6 +539,25 @@ fn void fmt_expr(DString* buf, AstNode* e, int indent)
 			fmt_expr(buf, e.children[0], indent);
 			buf.append(" {\n");
 			fmt_match_arms(buf, e, indent);
+			return;
+		case PMATCH:
+			buf.append("match ");
+			fmt_expr(buf, e.children[0], indent);
+			buf.append(" {\n");
+			{
+				int npats = ((int)e.children.len - 1) / 2;
+				for (int i = 0; i < npats; i++) {
+					if (i > 0) buf.append(",\n");
+					fmt_indent(buf, indent + FMT_INDENT);
+					AstNode* pat = e.children[1 + 2 * i];
+					fmt_expr(buf, pat, indent + FMT_INDENT);
+					buf.append(" => ");
+					fmt_expr(buf, e.children[1 + 2 * i + 1], indent + FMT_INDENT);
+				}
+				buf.append("\n");
+				fmt_indent(buf, indent);
+				buf.append_char('}');
+			}
 			return;
 		case LETREC:
 		case LET_T:

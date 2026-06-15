@@ -10,10 +10,10 @@ enum TokKind : char
 	TK_EOF,
 	TK_NUM, TK_STR, TK_IDENT,
 	TK_LPAREN, TK_RPAREN, TK_LBRACE, TK_RBRACE, TK_LBRACK, TK_RBRACK,
-	TK_SEMI, TK_COMMA, TK_DOT, TK_DOTDOT, TK_COLON, TK_EQ, TK_ARROW, TK_BANG,
+	TK_SEMI, TK_COMMA, TK_DOT, TK_DOTDOT, TK_DOTDOTDOT, TK_COLON, TK_EQ, TK_ARROW, TK_BANG,
 	TK_PLUS, TK_MINUS, TK_STAR, TK_SLASH,
 	TK_EQEQ, TK_NEQ, TK_LT, TK_GT, TK_LE, TK_GE,
-	TK_AND, TK_OR,
+	TK_AND, TK_OR, TK_QUESTQUEST,
 	TK_KW_LET, TK_KW_FN, TK_KW_IF, TK_KW_THEN, TK_KW_ELSE,
 	TK_KW_TRUE, TK_KW_FALSE, TK_KW_NIL,
 	TK_KW_THROW, TK_KW_TRY, TK_KW_CATCH,
@@ -238,6 +238,10 @@ fn Token lex_one(Lexer* l, long start_line, long start_col)
 	{
 		if (l.pos + 1 < l.src.len && l.src[l.pos + 1] == '.')
 		{
+			if (l.pos + 2 < l.src.len && l.src[l.pos + 2] == '.')
+			{
+				t.kind = TK_DOTDOTDOT; t.text = "..."; l.pos += 3; return t;
+			}
 			t.kind = TK_DOTDOT; t.text = ".."; l.pos += 2; return t;
 		}
 		t.kind = TK_DOT; t.text = "."; l.pos++; return t;
@@ -286,6 +290,10 @@ fn Token lex_one(Lexer* l, long start_line, long start_col)
 			t.kind = TK_GE; t.text = ">="; l.pos += 2; return t;
 		}
 		t.kind = TK_GT; t.text = ">"; l.pos++; return t;
+	}
+	if (c == '?' && l.pos + 1 < l.src.len && l.src[l.pos + 1] == '?')
+	{
+		t.kind = TK_QUESTQUEST; t.text = "??"; l.pos += 2; return t;
 	}
 	t.kind = TK_EOF;
 	t.text = "";
@@ -339,7 +347,8 @@ fn void lex_init(Lexer* l, String src)
 //
 //   program  := toplevel* EOF
 //   toplevel := "let" IDENT (":" type)? "=" expr ";"? | expr ";"?
-//   expr     := or_expr
+//   expr     := nullcoal
+//   nullcoal := or ("??" or)*
 //   or       := and ("or" and)*
 //   and      := eq ("and" eq)*
 //   eq       := cmp (("==="|"!==") cmp)*
@@ -363,7 +372,7 @@ fn void lex_init(Lexer* l, String src)
 //   array_literal  := "[" (expr ("," expr)*)? "]"
 //   arm      := UPPER_IDENT "(" IDENT ")" "=>" expr
 //   params   := param ("," param)*
-//   param    := IDENT (":" type)?
+//   param    := IDENT (":" type)? | "{" IDENT ("," IDENT)* "}"
 //   type     := "Int"|"Number"|"String"|"Bool"
 //             | type "[]" | IDENT | "{" tfield ("," tfield)* "}"
 //   tfield   := IDENT ":" type
@@ -550,6 +559,21 @@ fn AstNode* parse_or(Parser* p)
 	return left;
 }
 
+// a ?? b  →  NULLCOAL(a, b): rhs when lhs throws or is nil
+fn AstNode* parse_nullcoal(Parser* p)
+{
+	AstNode* left = parse_or(p);
+	while (!p.error && parser_check(p, TK_QUESTQUEST))
+	{
+		parser_advance(p);
+		AstNode* right = parse_or(p);
+		left = make_nullcoal(left, right);
+	}
+	return left;
+}
+
+fn AstNode* parse_expr(Parser* p) => parse_nullcoal(p);
+
 fn AstNode* parse_and(Parser* p)
 {
 	AstNode* left = parse_eq(p);
@@ -582,9 +606,14 @@ fn AstNode* parse_cmp(Parser* p)
 	while (!p.error && (parser_check(p, TK_LT) || parser_check(p, TK_GT)
 		|| parser_check(p, TK_LE) || parser_check(p, TK_GE)))
 	{
-		// `<` followed by `/` is the closing tag `</` of an enclosing
-		// element; never consume it as a comparison operator.
-		if (parser_check(p, TK_LT) && lex_peek(p.lex).kind == TK_SLASH) break;
+		// `<` followed by `/` is `</` (close tag); followed by an
+		// UpperCamelCase ident is a JSX element open tag.  Both stop the
+		// comparison chain so `< VStack >` is never parsed as an operator.
+		if (parser_check(p, TK_LT)) {
+			Token pk = lex_peek(p.lex);
+			if (pk.kind == TK_SLASH) break;
+			if (pk.kind == TK_IDENT && is_upper_first(pk.text)) break;
+		}
 		String op = parser_cur(p).text;
 		parser_advance(p);
 		AstNode* right = parse_add(p);
@@ -696,8 +725,8 @@ fn AstNode* parse_element(Parser* p)
 		}
 		else if (parser_check(p, TK_IDENT))
 		{
-			v = make_var(parser_cur(p).text);
-			parser_advance(p);
+			// Allow dot-access expressions like state.width
+			v = parse_postfix(p);
 		}
 		else
 		{
@@ -740,7 +769,7 @@ fn AstNode* parse_element(Parser* p)
 			Token t1 = lex_peek(p.lex);
 			if (t1.kind == TK_SLASH) break;
 		}
-		AstNode* child = parse_or(p);
+		AstNode* child = parse_expr(p);
 		if (p.error) return make_call(make_var(tag), { attrs });
 		AstNode*[] nc = mem::talloc_array(AstNode*, (sz)(cn + 1));
 		for (int i = 0; i < cn; i++) nc[i] = children[i];
@@ -818,6 +847,7 @@ fn AstNode* parse_postfix(Parser* p)
 		}
 		else if (parser_check(p, TK_LPAREN))
 		{
+			long call_line = parser_cur(p).line + 1;
 			parser_advance(p);
 			AstNode*[] args;
 			int n = 0;
@@ -825,7 +855,7 @@ fn AstNode* parse_postfix(Parser* p)
 			{
 				for (;;)
 				{
-					AstNode* a = parse_or(p);
+					AstNode* a = parse_expr(p);
 					if (p.error) return e;
 					AstNode*[] na = mem::talloc_array(AstNode*, (sz)(n + 1));
 					for (int i = 0; i < n; i++) na[i] = args[i];
@@ -847,11 +877,11 @@ fn AstNode* parse_postfix(Parser* p)
 				String mname = *as_str(e.children[1].literal);
 				// Pass user args (not the receiver) — the desugarer binds
 				// the receiver as the first argument of the call.
-				e = make_methodcall(recv, mname, args);
+				e = lined(make_methodcall(recv, mname, args), call_line);
 			}
 			else
 			{
-				e = make_call(e, args);
+				e = lined(make_call(e, args), call_line);
 			}
 		}
 		else if (parser_check(p, TK_LBRACK))
@@ -863,7 +893,7 @@ fn AstNode* parse_postfix(Parser* p)
 			if (parser_check(p, TK_DOTDOT))
 			{
 				parser_advance(p);
-				AstNode* end = parse_or(p);
+				AstNode* end = parse_expr(p);
 				if (p.error) return e;
 				AstNode*[] args = mem::talloc_array(AstNode*, 3);
 				args[0] = e;
@@ -873,7 +903,7 @@ fn AstNode* parse_postfix(Parser* p)
 			}
 			else
 			{
-				AstNode* start = parse_or(p);
+				AstNode* start = parse_expr(p);
 				if (p.error) return e;
 				if (parser_check(p, TK_DOTDOT))
 				{
@@ -889,7 +919,7 @@ fn AstNode* parse_postfix(Parser* p)
 					}
 					else
 					{
-						AstNode* end = parse_or(p);
+						AstNode* end = parse_expr(p);
 						if (p.error) return e;
 						args = mem::talloc_array(AstNode*, 3);
 						args[0] = e;
@@ -920,6 +950,11 @@ fn AstNode* parse_postfix(Parser* p)
 fn AstNode* parse_record_lit(Parser* p)
 {
 	// Already consumed the '{'.
+	// Collect spread sources and regular fields separately.
+	// { ...base, k: v }  →  record_spread(base, {k: v})
+	// Multiple spreads allowed; each wraps the rest.
+	AstNode*[] spreads = {};
+	int sn = 0;
 	String[] keys = {};
 	AstNode*[] vals = {};
 	int n = 0;
@@ -927,31 +962,41 @@ fn AstNode* parse_record_lit(Parser* p)
 	{
 		for (;;)
 		{
-			if (!parser_check(p, TK_IDENT))
+			if (parser_accept(p, TK_DOTDOTDOT))
 			{
-				parser_set_error(p, "expected field name in record literal");
-				return make_record({}, {});
+				AstNode* src = parse_expr(p);
+				if (p.error) return make_record({}, {});
+				AstNode*[] ns = mem::talloc_array(AstNode*, (sz)(sn + 1));
+				for (int i = 0; i < sn; i++) ns[i] = spreads[i];
+				ns[sn] = src;
+				spreads = ns;
+				sn++;
 			}
-			String k = parser_cur(p).text;
-			parser_advance(p);
-			if (!parser_accept(p, TK_COLON))
+			else
 			{
-				parser_set_error(p, "expected ':' after record field name");
-				return make_record({}, {});
+				if (!parser_check(p, TK_IDENT))
+				{
+					parser_set_error(p, "expected field name or '...' in record literal");
+					return make_record({}, {});
+				}
+				String k = parser_cur(p).text;
+				parser_advance(p);
+				if (!parser_accept(p, TK_COLON))
+				{
+					parser_set_error(p, "expected ':' after record field name");
+					return make_record({}, {});
+				}
+				AstNode* v = parse_expr(p);
+				if (p.error) return make_record({}, {});
+				String[] nk = mem::talloc_array(String, (sz)(n + 1));
+				AstNode*[] nv = mem::talloc_array(AstNode*, (sz)(n + 1));
+				for (int i = 0; i < n; i++) { nk[i] = keys[i]; nv[i] = vals[i]; }
+				nk[n] = k; nv[n] = v;
+				keys = nk; vals = nv;
+				n++;
 			}
-			AstNode* v = parse_or(p);
-			if (p.error) return make_record({}, {});
-			String[] nk = mem::talloc_array(String, (sz)(n + 1));
-			AstNode*[] nv = mem::talloc_array(AstNode*, (sz)(n + 1));
-			for (int i = 0; i < n; i++) { nk[i] = keys[i]; nv[i] = vals[i]; }
-			nk[n] = k;
-			nv[n] = v;
-			keys = nk;
-			vals = nv;
-			n++;
 			if (parser_accept(p, TK_COMMA))
 			{
-				// Trailing comma before `}` is fine.
 				if (parser_check(p, TK_RBRACE)) break;
 				continue;
 			}
@@ -963,7 +1008,13 @@ fn AstNode* parse_record_lit(Parser* p)
 		parser_set_error(p, "expected '}' to close record");
 		return make_record(keys, vals);
 	}
-	return make_record(keys, vals);
+	AstNode* rec = make_record(keys, vals);
+	// Wrap with record_spread calls, outermost spread first.
+	// { ...a, ...b, k: v }  →  record_spread(a, record_spread(b, {k: v}))
+	for (int i = sn - 1; i >= 0; i--) {
+		rec = make_call(make_prim_node("record_spread"), { spreads[i], rec });
+	}
+	return rec;
 }
 
 fn AstNode* parse_array_lit(Parser* p)
@@ -974,7 +1025,7 @@ fn AstNode* parse_array_lit(Parser* p)
 	{
 		for (;;)
 		{
-			AstNode* e = parse_or(p);
+			AstNode* e = parse_expr(p);
 			if (p.error) return make_array({});
 			AstNode*[] ni = mem::talloc_array(AstNode*, (sz)(n + 1));
 			for (int i = 0; i < n; i++) ni[i] = items[i];
@@ -998,6 +1049,10 @@ fn AstNode* parse_array_lit(Parser* p)
 	return make_array(items);
 }
 
+// Destructuring record: one slot per param that used { x, y } syntax.
+// pindex = which positional param was destructured; fields = names to extract.
+struct DestructureSlot { int pindex; String[] fields; int nfields; }
+
 // Shared helper: parse "(params) [-> ret_type] body" after "fn" has been consumed.
 // Returns LAMBDA or LAMBDA_T.
 fn AstNode* parse_lambda_params_and_body(Parser* p)
@@ -1009,32 +1064,82 @@ fn AstNode* parse_lambda_params_and_body(Parser* p)
 	}
 	String[] pnames = {};
 	Type*[] ptypes = {};
+	DestructureSlot[] dslots = {};
 	int pn = 0;
+	int dn = 0;
 	if (!parser_check(p, TK_RPAREN))
 	{
 		for (;;)
 		{
-			if (!parser_check(p, TK_IDENT))
+			if (parser_check(p, TK_LBRACE))
 			{
-				parser_set_error(p, "expected parameter name");
-				return make_lit(mk_nil());
+				// Destructured record param: { x, y, z }
+				// Synthesize a hidden param name "_p<n>" and record fields.
+				parser_advance(p);
+				String[] fields = {};
+				int fn_ = 0;
+				while (!p.error && !parser_check(p, TK_RBRACE) && !parser_check(p, TK_EOF))
+				{
+					if (!parser_check(p, TK_IDENT))
+					{
+						parser_set_error(p, "expected field name in destructuring pattern");
+						return make_lit(mk_nil());
+					}
+					String fname = parser_cur(p).text;
+					parser_advance(p);
+					String[] nf = mem::talloc_array(String, (sz)(fn_ + 1));
+					for (int i = 0; i < fn_; i++) nf[i] = fields[i];
+					nf[fn_] = fname;
+					fields = nf;
+					fn_++;
+					if (!parser_accept(p, TK_COMMA)) break;
+				}
+				if (!parser_accept(p, TK_RBRACE))
+				{
+					parser_set_error(p, "expected '}' to close destructuring pattern");
+					return make_lit(mk_nil());
+				}
+				// Generate hidden param name
+				String hidden = string::tformat("_p%d", pn);
+				String[] npn = mem::talloc_array(String, (sz)(pn + 1));
+				Type*[] npt = mem::talloc_array(Type*, (sz)(pn + 1));
+				for (int i = 0; i < pn; i++) { npn[i] = pnames[i]; npt[i] = ptypes[i]; }
+				npn[pn] = hidden;
+				npt[pn] = null;
+				pnames = npn;
+				ptypes = npt;
+				// Record the slot
+				DestructureSlot[] nds = mem::talloc_array(DestructureSlot, (sz)(dn + 1));
+				for (int i = 0; i < dn; i++) nds[i] = dslots[i];
+				nds[dn] = { .pindex = pn, .fields = fields, .nfields = fn_ };
+				dslots = nds;
+				dn++;
+				pn++;
 			}
-			String name = parser_cur(p).text;
-			parser_advance(p);
-			Type* pt = null;
-			if (parser_accept(p, TK_COLON))
+			else
 			{
-				pt = parse_type(p);
-				if (pt == null) return make_lit(mk_nil());
+				if (!parser_check(p, TK_IDENT))
+				{
+					parser_set_error(p, "expected parameter name");
+					return make_lit(mk_nil());
+				}
+				String name = parser_cur(p).text;
+				parser_advance(p);
+				Type* pt = null;
+				if (parser_accept(p, TK_COLON))
+				{
+					pt = parse_type(p);
+					if (pt == null) return make_lit(mk_nil());
+				}
+				String[] npn = mem::talloc_array(String, (sz)(pn + 1));
+				Type*[] npt = mem::talloc_array(Type*, (sz)(pn + 1));
+				for (int i = 0; i < pn; i++) { npn[i] = pnames[i]; npt[i] = ptypes[i]; }
+				npn[pn] = name;
+				npt[pn] = pt;
+				pnames = npn;
+				ptypes = npt;
+				pn++;
 			}
-			String[] npn = mem::talloc_array(String, (sz)(pn + 1));
-			Type*[] npt = mem::talloc_array(Type*, (sz)(pn + 1));
-			for (int i = 0; i < pn; i++) { npn[i] = pnames[i]; npt[i] = ptypes[i]; }
-			npn[pn] = name;
-			npt[pn] = pt;
-			pnames = npn;
-			ptypes = npt;
-			pn++;
 			if (parser_accept(p, TK_COMMA)) continue;
 			break;
 		}
@@ -1064,36 +1169,55 @@ fn AstNode* parse_lambda_params_and_body(Parser* p)
 	}
 	else
 	{
-		body = parse_or(p);
+		body = parse_expr(p);
 		if (p.error) return body;
+	}
+	// Wrap body with destructuring lets, innermost first (reverse order).
+	// fn({ x, y }) body  →  fn(_p0) { let x = _p0.x ?? nil; let y = _p0.y ?? nil; body }
+	// Missing fields yield nil rather than throwing, so ?? defaults work naturally.
+	for (int di = dn - 1; di >= 0; di--)
+	{
+		DestructureSlot slot = dslots[di];
+		String hidden = pnames[slot.pindex];
+		for (int fi = slot.nfields - 1; fi >= 0; fi--)
+		{
+			String fname = slot.fields[fi];
+			AstNode* field_get = make_try(
+				make_get(make_var(hidden), make_lit(mk_str(fname))),
+				"_", make_lit(mk_nil()));
+			body = make_letrec(fname, field_get, body);
+		}
 	}
 	if (ret != null) return make_typed_lambda(pnames, ptypes, ret, body);
 	return make_lambda(pnames, body);
 }
 
+macro AstNode* lined(AstNode* node, long ln) { node.line = ln; return node; }
+
 fn AstNode* parse_primary(Parser* p)
 {
 	Token t = parser_cur(p);
+	long ln = t.line + 1; // convert to 1-indexed
 	switch (t.kind)
 	{
 		case TK_NUM:
 			parser_advance(p);
-			return make_lit(mk_num(t.num_val));
+			return lined(make_lit(mk_num(t.num_val)), ln);
 		case TK_STR:
 			parser_advance(p);
-			return make_lit(mk_str(t.text));
+			return lined(make_lit(mk_str(t.text)), ln);
 		case TK_KW_TRUE:
 			parser_advance(p);
-			return make_lit(mk_bool(true));
+			return lined(make_lit(mk_bool(true)), ln);
 		case TK_KW_FALSE:
 			parser_advance(p);
-			return make_lit(mk_bool(false));
+			return lined(make_lit(mk_bool(false)), ln);
 		case TK_KW_NIL:
 			parser_advance(p);
-			return make_lit(mk_nil());
+			return lined(make_lit(mk_nil()), ln);
 		case TK_IDENT:
 			parser_advance(p);
-			return make_var(t.text);
+			return lined(make_var(t.text), ln);
 		case TK_DOLLAR:
 			parser_advance(p);
 			if (!parser_check(p, TK_IDENT))
@@ -1106,7 +1230,7 @@ fn AstNode* parse_primary(Parser* p)
 			// $x = expr  →  signal_set(x, expr)
 			if (parser_accept(p, TK_EQ))
 			{
-				AstNode* val = parse_or(p);
+				AstNode* val = parse_expr(p);
 				if (p.error) return val;
 				return make_call(make_var("signal_set"), { make_var(sig_name), val });
 			}
@@ -1114,7 +1238,7 @@ fn AstNode* parse_primary(Parser* p)
 			return make_call(make_var("signal_get"), { make_var(sig_name) });
 		case TK_LPAREN:
 			parser_advance(p);
-			AstNode* e = parse_or(p);
+			AstNode* e = parse_expr(p);
 			if (p.error) return e;
 			if (!parser_accept(p, TK_RPAREN))
 			{
@@ -1125,7 +1249,8 @@ fn AstNode* parse_primary(Parser* p)
 		case TK_LBRACE:
 			parser_advance(p);
 			// Disambiguate: IDENT ":" → record literal, otherwise → block expression
-			if (parser_check(p, TK_IDENT) && p.lex.peek_tok.kind == TK_COLON)
+			if ((parser_check(p, TK_IDENT) && p.lex.peek_tok.kind == TK_COLON) ||
+			    parser_check(p, TK_DOTDOTDOT))
 			{
 				return parse_record_lit(p);
 			}
@@ -1157,31 +1282,31 @@ fn AstNode* parse_primary(Parser* p)
 			return parse_lambda_params_and_body(p);
 		case TK_KW_IF:
 			parser_advance(p);
-			AstNode* c = parse_or(p);
+			AstNode* c = parse_expr(p);
 			if (p.error) return c;
 			if (!parser_accept(p, TK_KW_THEN))
 			{
 				parser_set_error(p, "expected 'then' after if condition");
 				return c;
 			}
-			AstNode* tt = parse_or(p);
+			AstNode* tt = parse_expr(p);
 			if (p.error) return tt;
 			if (!parser_accept(p, TK_KW_ELSE))
 			{
 				parser_set_error(p, "expected 'else' after if-then");
 				return tt;
 			}
-			AstNode* el = parse_or(p);
+			AstNode* el = parse_expr(p);
 			if (p.error) return el;
 			return make_if(c, tt, el);
 		case TK_KW_THROW:
 			parser_advance(p);
-			AstNode* v = parse_or(p);
+			AstNode* v = parse_expr(p);
 			if (p.error) return v;
 			return make_throw(v);
 		case TK_KW_TRY:
 			parser_advance(p);
-			AstNode* body_e = parse_or(p);
+			AstNode* body_e = parse_expr(p);
 			if (p.error) return body_e;
 			if (!parser_accept(p, TK_KW_CATCH))
 			{
@@ -1195,17 +1320,93 @@ fn AstNode* parse_primary(Parser* p)
 			}
 			String cname = parser_cur(p).text;
 			parser_advance(p);
-			AstNode* handler = parse_or(p);
+			AstNode* handler = parse_expr(p);
 			if (p.error) return handler;
 			return make_try(body_e, cname, handler);
 		case TK_KW_MATCH:
 			parser_advance(p);
-			AstNode* scrut = parse_or(p);
+			AstNode* scrut = parse_expr(p);
 			if (p.error) return scrut;
 			if (!parser_accept(p, TK_LBRACE))
 			{
 				parser_set_error(p, "expected '{' after 'match'");
 				return scrut;
+			}
+			// Peek at the first arm to decide: tagged (UpperCamelCase IDENT) or primitive.
+			bool is_primitive_match =
+				parser_check(p, TK_NUM) ||
+				parser_check(p, TK_STR) ||
+				parser_check(p, TK_KW_TRUE) ||
+				parser_check(p, TK_KW_FALSE) ||
+				parser_check(p, TK_KW_NIL) ||
+				parser_check(p, TK_RBRACE) ||
+				(parser_check(p, TK_IDENT) && !is_upper_first(parser_cur(p).text));
+			if (is_primitive_match)
+			{
+				AstNode*[] pm_patterns = {};
+				AstNode*[] pm_bodies = {};
+				int pn = 0;
+				while (!parser_check(p, TK_RBRACE) && !parser_check(p, TK_EOF))
+				{
+					// Pattern: literal, variable reference, or _ wildcard
+					AstNode* pat_node;
+					if (parser_check(p, TK_NUM))
+					{
+						pat_node = make_lit(mk_num(parser_cur(p).num_val));
+						parser_advance(p);
+					}
+					else if (parser_check(p, TK_STR))
+					{
+						pat_node = make_lit(mk_str(parser_cur(p).text));
+						parser_advance(p);
+					}
+					else if (parser_check(p, TK_KW_TRUE))
+					{
+						pat_node = make_lit(mk_bool(true));
+						parser_advance(p);
+					}
+					else if (parser_check(p, TK_KW_FALSE))
+					{
+						pat_node = make_lit(mk_bool(false));
+						parser_advance(p);
+					}
+					else if (parser_check(p, TK_KW_NIL))
+					{
+						pat_node = make_lit(mk_nil());
+						parser_advance(p);
+					}
+					else if (parser_check(p, TK_IDENT))
+					{
+						// _ = wildcard; other lowercase ident = variable pattern (compare by value)
+						pat_node = make_var(parser_cur(p).text);
+						parser_advance(p);
+					}
+					else
+					{
+						parser_set_error(p, "expected literal, variable, or _ in match arm");
+						return scrut;
+					}
+					if (!parser_accept(p, TK_ARROW))
+					{
+						parser_set_error(p, "expected '->' in match arm");
+						return scrut;
+					}
+					AstNode* body_arm = parse_expr(p);
+					if (p.error) return scrut;
+					AstNode*[] np = mem::talloc_array(AstNode*, (sz)(pn + 1));
+					AstNode*[] nb2 = mem::talloc_array(AstNode*, (sz)(pn + 1));
+					for (int i = 0; i < pn; i++) { np[i] = pm_patterns[i]; nb2[i] = pm_bodies[i]; }
+					np[pn] = pat_node; nb2[pn] = body_arm;
+					pm_patterns = np; pm_bodies = nb2;
+					pn++;
+					parser_accept(p, TK_COMMA);
+				}
+				if (!parser_accept(p, TK_RBRACE))
+				{
+					parser_set_error(p, "expected '}' to close match");
+					return scrut;
+				}
+				return make_pmatch(scrut, pm_patterns, pm_bodies);
 			}
 			String[] tags = {};
 			String[] binds = {};
@@ -1242,7 +1443,7 @@ fn AstNode* parse_primary(Parser* p)
 					parser_set_error(p, "expected '=>' in match arm");
 					return scrut;
 				}
-				AstNode* body_arm = parse_or(p);
+				AstNode* body_arm = parse_expr(p);
 				if (p.error) return scrut;
 				String[] nt = mem::talloc_array(String, (sz)(an + 1));
 				String[] nb = mem::talloc_array(String, (sz)(an + 1));
@@ -1288,7 +1489,7 @@ fn AstNode* parse_toplevel(Parser* p)
 				parser_set_error(p, "expected '=' in let $");
 				return make_lit(mk_nil());
 			}
-			AstNode* init = parse_or(p);
+			AstNode* init = parse_expr(p);
 			if (p.error) return init;
 			parser_accept(p, TK_SEMI);
 			AstNode* sig_init = make_call(make_var("signal"), { init });
@@ -1312,7 +1513,7 @@ fn AstNode* parse_toplevel(Parser* p)
 			parser_set_error(p, "expected '=' in let");
 			return make_lit(mk_nil());
 		}
-		AstNode* init = parse_or(p);
+		AstNode* init = parse_expr(p);
 		if (p.error) return init;
 		parser_accept(p, TK_SEMI);
 		// Body is unknown here — parse_program builds a nested let chain so
@@ -1403,7 +1604,7 @@ fn AstNode* parse_toplevel(Parser* p)
 		}
 		return body;
 	}
-	AstNode* e = parse_or(p);
+	AstNode* e = parse_expr(p);
 	parser_accept(p, TK_SEMI);
 	return e;
 }

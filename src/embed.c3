@@ -81,6 +81,34 @@ fn Value engine_mk_str(String s) {
 	return mk_str(s);
 }
 
+// Build a DS record from parallel key/value arrays.
+fn Value engine_mk_record(String[] keys, Value[] values) {
+	Record* r = new_record();
+	uint[] ids = mem::talloc_array(uint, keys.len);
+	Value[] vals = mem::talloc_array(Value, keys.len);
+	for (int i = 0; i < keys.len; i++) {
+		ids[i]  = intern(keys[i]);
+		vals[i] = values[i];
+	}
+	r.keys   = ids;
+	r.values = vals;
+	return val_rec(r);
+}
+
+// Build a DS tagged value: { __tag: tag, __val: payload }
+fn Value engine_mk_tagged(String tag, Value payload) {
+	return engine_mk_record({ "__tag", "__val" }, { mk_str(tag), payload });
+}
+
+// Build a DS array from a slice of Values.
+fn Value engine_mk_array(Value[] values) {
+	Array* a = new_array();
+	Value* buf = mem::talloc_array(Value, values.len);
+	for (sz i = 0; i < values.len; i++) buf[i] = values[i];
+	a.items = buf[:values.len];
+	return val_arr(a);
+}
+
 // ── Value extraction ─────────────────────────────────────────────
 
 fn double engine_as_num(Value v) => as_num(v);
@@ -138,4 +166,19 @@ fn Value engine_record_get(Value v, String field) {
 fn int engine_record_len(Value v) {
 	if (!is_rec(v)) return 0;
 	return (int)as_rec(v).keys.len;
+}
+
+// ── Calling DS closures from C3 ──────────────────────────────────
+
+// engine_call invokes a DS closure value with the given arguments.
+// Goes through eval() so TCO trampolining is handled correctly.
+fn EvalResult engine_call(Value fn_val, Value[] args) {
+	if (!is_closure(fn_val) && !is_prim(fn_val)) {
+		return { .thrown = true, .value = mk_str("engine_call: not a function") };
+	}
+	EvalResult r = apply_fn(fn_val, args);
+	if (r.is_tail) {
+		return eval(r.tail_node, r.tail_env);
+	}
+	return r;
 }
