@@ -196,11 +196,15 @@ fn long fmt_estimate_width(AstNode* e)
 		case TRY:
 			return 4 + fmt_estimate_width(e.children[0]) + 7
 				+ 1 + fmt_estimate_width(e.children[1]);
+		case NULLCOAL:
+			return fmt_estimate_width(e.children[0]) + 4
+				+ fmt_estimate_width(e.children[1]);
 		case LETREC:
 		case LET_T:
 		case TYPEDEF:
 		case CONSTRUCT:
 		case MATCH:
+		case PMATCH:
 		case SEQ:
 			return 100; // "big" — these are formatted multi-line anyway
 	}
@@ -298,6 +302,15 @@ fn void fmt_lambda(DString* buf, AstNode* e, int indent)
 	buf.append_char('}');
 }
 
+// Check if a callee node (child[0] of a CALL) refers to a named function.
+// Handles VAR, PRIM, and LIT/PRIMITIVE node types.
+fn bool is_callee_named(AstNode* node, String name) {
+	if (node.type == VAR && node.name == name) return true;
+	if (node.type == PRIM && node.name == name) return true;
+	if (node.type == LIT && is_prim(node.literal) && as_prim(node.literal).name == name) return true;
+	return false;
+}
+
 fn void fmt_expr(DString* buf, AstNode* e, int indent)
 {
 	if (e == null)
@@ -330,6 +343,9 @@ fn void fmt_expr(DString* buf, AstNode* e, int indent)
 					buf.append(*as_str(e.literal));
 					buf.append_char('"');
 					return;
+				case PRIMITIVE:
+					buf.append(as_prim(e.literal).name);
+					return;
 				default: buf.append("?lit?"); return;
 			}
 		case VAR:
@@ -344,6 +360,22 @@ fn void fmt_expr(DString* buf, AstNode* e, int indent)
 			fmt_expr(buf, e.children[1], indent);
 			return;
 		case CALL:
+			// Pattern: signal_get(x) → $x  (callee may be VAR, PRIM, or LIT/PRIMITIVE)
+			if (e.children.len == 2 && e.children[1].type == VAR && is_callee_named(e.children[0], "signal_get"))
+			{
+				buf.append_char('$');
+				buf.append(e.children[1].name);
+				return;
+			}
+			// Pattern: signal_set(x, expr) → $x = expr
+			if (e.children.len == 3 && e.children[1].type == VAR && is_callee_named(e.children[0], "signal_set"))
+			{
+				buf.append_char('$');
+				buf.append(e.children[1].name);
+				buf.append(" = ");
+				fmt_expr(buf, e.children[2], indent);
+				return;
+			}
 			fmt_expr(buf, e.children[0], indent);
 			buf.append_char('(');
 			for (int i = 1; i < e.children.len; i++)
@@ -367,30 +399,81 @@ fn void fmt_expr(DString* buf, AstNode* e, int indent)
 			return;
 		case IF:
 		{
-			long cond_w = fmt_estimate_width(e.children[0]);
-			long then_w = fmt_estimate_width(e.children[1]);
-			long else_w = fmt_estimate_width(e.children[2]);
+			AstNode* cond_e = e.children[0];
+			AstNode* then_e = e.children[1];
+			AstNode* else_e = e.children[2];
+			bool then_is_block = then_e.type == SEQ;
+			bool else_is_block = else_e.type == SEQ;
+			long cond_w = fmt_estimate_width(cond_e);
+			long then_w = fmt_estimate_width(then_e);
+			long else_w = fmt_estimate_width(else_e);
 			long single_w = (long)indent + 3 + cond_w + 5 + then_w + 5 + else_w;
-			if (single_w < 50)
+			if (single_w < 100 && !then_is_block && !else_is_block)
 			{
 				buf.append("if ");
-				fmt_expr(buf, e.children[0], indent);
+				fmt_expr(buf, cond_e, indent);
 				buf.append(" then ");
-				fmt_expr(buf, e.children[1], indent);
+				fmt_expr(buf, then_e, indent);
 				buf.append(" else ");
-				fmt_expr(buf, e.children[2], indent);
+				fmt_expr(buf, else_e, indent);
 				return;
 			}
 			buf.append("if ");
-			fmt_expr(buf, e.children[0], indent);
-			buf.append(" then\n");
-			fmt_indent(buf, indent + FMT_INDENT);
-			fmt_expr(buf, e.children[1], indent + FMT_INDENT);
-			buf.append("\n");
-			fmt_indent(buf, indent);
-			buf.append("else\n");
-			fmt_indent(buf, indent + FMT_INDENT);
-			fmt_expr(buf, e.children[2], indent + FMT_INDENT);
+			fmt_expr(buf, cond_e, indent);
+			buf.append(" then");
+			if (then_is_block)
+			{
+				buf.append(" {");
+				for (int i = 0; i < then_e.children.len; i++)
+				{
+					buf.append("\n");
+					fmt_indent(buf, indent + FMT_INDENT);
+					fmt_expr(buf, then_e.children[i], indent + FMT_INDENT);
+				}
+				buf.append("\n");
+				fmt_indent(buf, indent);
+				buf.append("}");
+			}
+			else
+			{
+				buf.append("\n");
+				fmt_indent(buf, indent + FMT_INDENT);
+				fmt_expr(buf, then_e, indent + FMT_INDENT);
+			}
+			if (then_is_block)
+			{
+				buf.append(" else");
+			}
+			else
+			{
+				buf.append("\n");
+				fmt_indent(buf, indent);
+				buf.append("else");
+			}
+			if (else_is_block)
+			{
+				buf.append(" {");
+				for (int i = 0; i < else_e.children.len; i++)
+				{
+					buf.append("\n");
+					fmt_indent(buf, indent + FMT_INDENT);
+					fmt_expr(buf, else_e.children[i], indent + FMT_INDENT);
+				}
+				buf.append("\n");
+				fmt_indent(buf, indent);
+				buf.append("}");
+			}
+			else if (else_e.type == IF)
+			{
+				buf.append(" ");
+				fmt_expr(buf, else_e, indent);
+			}
+			else
+			{
+				buf.append("\n");
+				fmt_indent(buf, indent + FMT_INDENT);
+				fmt_expr(buf, else_e, indent + FMT_INDENT);
+			}
 			return;
 		}
 		case LAMBDA:
@@ -401,8 +484,19 @@ fn void fmt_expr(DString* buf, AstNode* e, int indent)
 			return;
 		case GET:
 			fmt_expr(buf, e.children[0], indent);
-			buf.append_char('.');
-			fmt_key(buf, e.children[1]);
+			// Use .name for string-identifier keys, [expr] for everything else.
+			if (e.children[1].type == LIT && is_str(e.children[1].literal)
+				&& fmt_is_valid_ident(*as_str(e.children[1].literal)))
+			{
+				buf.append_char('.');
+				buf.append(*as_str(e.children[1].literal));
+			}
+			else
+			{
+				buf.append_char('[');
+				fmt_expr(buf, e.children[1], indent);
+				buf.append_char(']');
+			}
 			return;
 		case SET:
 			fmt_expr(buf, e.children[0], indent);
@@ -429,6 +523,11 @@ fn void fmt_expr(DString* buf, AstNode* e, int indent)
 			buf.append_char(' ');
 			fmt_expr(buf, e.children[1], indent);
 			return;
+		case NULLCOAL:
+			fmt_expr(buf, e.children[0], indent);
+			buf.append(" ?? ");
+			fmt_expr(buf, e.children[1], indent);
+			return;
 		case CONSTRUCT:
 			buf.append(e.name);
 			buf.append_char('(');
@@ -441,16 +540,74 @@ fn void fmt_expr(DString* buf, AstNode* e, int indent)
 			buf.append(" {\n");
 			fmt_match_arms(buf, e, indent);
 			return;
+		case PMATCH:
+			buf.append("match ");
+			fmt_expr(buf, e.children[0], indent);
+			buf.append(" {\n");
+			{
+				int npats = ((int)e.children.len - 1) / 2;
+				for (int i = 0; i < npats; i++) {
+					if (i > 0) buf.append(",\n");
+					fmt_indent(buf, indent + FMT_INDENT);
+					AstNode* pat = e.children[1 + 2 * i];
+					fmt_expr(buf, pat, indent + FMT_INDENT);
+					buf.append(" => ");
+					fmt_expr(buf, e.children[1 + 2 * i + 1], indent + FMT_INDENT);
+				}
+				buf.append("\n");
+				fmt_indent(buf, indent);
+				buf.append_char('}');
+			}
+			return;
 		case LETREC:
 		case LET_T:
+			// Let binding in expression position (e.g. from...import inside a block).
+			// Emit as a let chain.
+			{
+				AstNode* chain = e;
+				while (chain != null && (chain.type == LETREC || chain.type == LET_T))
+				{
+					fmt_indent(buf, indent + 1);
+					// Pattern: let x = signal(expr) → let $x = expr
+					if (chain.type == LETREC
+						&& chain.children[0].type == CALL
+						&& chain.children[0].children.len == 2
+						&& is_callee_named(chain.children[0].children[0], "signal"))
+					{
+						buf.append("let $");
+						buf.append(chain.name);
+						buf.append(" = ");
+						fmt_expr(buf, chain.children[0].children[1], indent + 1);
+					}
+					else
+					{
+						buf.append("let ");
+						buf.append(chain.name);
+						buf.append(" = ");
+						fmt_expr(buf, chain.children[0], indent + 1);
+					}
+					buf.append(";\n");
+					chain = chain.children[1];
+				}
+				if (chain != null)
+				{
+					fmt_indent(buf, indent + 1);
+					fmt_expr(buf, chain, indent + 1);
+				}
+			}
+			return;
 		case TYPEDEF:
 		case SEQ:
-			// These don't normally appear inside expressions, but if they do
-			// (e.g. as the body of a function or a desugarer artifact), wrap
-			// them in a parenthesised block.
-			buf.append("/* unexpected " );
-			buf.append(string::tformat("%d", e.type.ordinal));
-			buf.append(" */");
+			// Block expression — emit as { ... }
+			buf.append("{\n");
+			for (int i = 0; i < e.children.len; i++)
+			{
+				fmt_indent(buf, indent + 1);
+				fmt_expr(buf, e.children[i], indent + 1);
+				if (i < e.children.len - 1) buf.append("\n");
+			}
+			fmt_indent(buf, indent);
+			buf.append("\n}");
 			return;
 	}
 }
@@ -465,10 +622,23 @@ fn void fmt_let_chain(DString* buf, AstNode* node, int indent)
 	if (node.type == LETREC)
 	{
 		fmt_indent(buf, indent);
-		buf.append("let ");
-		buf.append(node.name);
-		buf.append(" = ");
-		fmt_expr(buf, node.children[0], indent);
+		// Pattern: let x = signal(expr) → let $x = expr
+		if (node.children[0].type == CALL
+			&& node.children[0].children.len == 2
+			&& is_callee_named(node.children[0].children[0], "signal"))
+		{
+			buf.append("let $");
+			buf.append(node.name);
+			buf.append(" = ");
+			fmt_expr(buf, node.children[0].children[1], indent);
+		}
+		else
+		{
+			buf.append("let ");
+			buf.append(node.name);
+			buf.append(" = ");
+			fmt_expr(buf, node.children[0], indent);
+		}
 		buf.append(";\n");
 		fmt_let_chain(buf, node.children[1], indent);
 		return;

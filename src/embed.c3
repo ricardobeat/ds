@@ -81,6 +81,38 @@ fn Value engine_mk_str(String s) {
 	return mk_str(s);
 }
 
+// Build a DS record from parallel key/value arrays.
+fn Value engine_mk_record(String[] keys, Value[] values) {
+	Record* r = new_record();
+	uint[] ids = mem::new_array(uint, keys.len);
+	Value[] vals = mem::new_array(Value, keys.len);
+	for (int i = 0; i < keys.len; i++) {
+		ids[i] = intern(keys[i]);
+		// Re-intern string Values so their String* boxes are heap-stable.
+		// Records built here may be cached across @pool() frame boundaries.
+		vals[i] = is_str(values[i]) ? mk_str_intern(*as_str(values[i])) : values[i];
+	}
+	r.keys   = ids;
+	r.values = vals;
+	return val_rec(r);
+}
+
+// Build a DS tagged value: { __tag: tag, __val: payload }
+fn Value engine_mk_tagged(String tag, Value payload) {
+	return engine_mk_record({ "__tag", "__val" }, { mk_str(tag), payload });
+}
+
+// Build a DS array from a slice of Values.
+fn Value engine_mk_array(Value[] values) {
+	Array* a = new_array();
+	Value* buf = mem::new_array(Value, values.len);
+	for (sz i = 0; i < values.len; i++) {
+		buf[i] = is_str(values[i]) ? mk_str_intern(*as_str(values[i])) : values[i];
+	}
+	a.items = buf[:values.len];
+	return val_arr(a);
+}
+
 // ── Value extraction ─────────────────────────────────────────────
 
 fn double engine_as_num(Value v) => as_num(v);
@@ -138,4 +170,36 @@ fn Value engine_record_get(Value v, String field) {
 fn int engine_record_len(Value v) {
 	if (!is_rec(v)) return 0;
 	return (int)as_rec(v).keys.len;
+}
+
+// ── Calling DS closures from C3 ──────────────────────────────────
+
+// engine_begin_render resets the JSX element slot counter for a new render pass.
+// Call this before invoking the DS view function each frame.
+fn void engine_begin_render() {
+	g_element_slot = 0;
+}
+
+// Allocation tracking — count heap Array/Record allocations across render passes.
+fn void engine_alloc_reset() {
+	g_alloc_arrays   = 0;
+	g_alloc_records  = 0;
+	g_alloc_tracking = true;
+}
+fn void engine_alloc_stop()           { g_alloc_tracking = false; }
+fn ulong engine_alloc_arrays()        => g_alloc_arrays;
+fn ulong engine_alloc_records()       => g_alloc_records;
+fn ulong engine_alloc_total()         => g_alloc_arrays + g_alloc_records;
+
+// engine_call invokes a DS closure value with the given arguments.
+// Goes through eval() so TCO trampolining is handled correctly.
+fn EvalResult engine_call(Value fn_val, Value[] args) {
+	if (!is_closure(fn_val) && !is_prim(fn_val)) {
+		return { .thrown = true, .value = mk_str("engine_call: not a function") };
+	}
+	EvalResult r = apply_fn(fn_val, args);
+	if (r.is_tail) {
+		return eval(r.tail_node, r.tail_env);
+	}
+	return r;
 }

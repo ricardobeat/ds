@@ -1,0 +1,46 @@
+// signals_demo.ds — Reactive signals + stable element identity
+
+// --- Signals: mutable reactive cells ---
+let count = signal(0)
+let name = signal("Alice")
+
+signal_set(count, 42)
+signal_set(name, "Bob")
+
+// --- Derived: lazy computed values that auto-update ---
+let doubled = derived(fn() { signal_get(count) * 2 })
+let greeting = derived(fn() { "Hello, " + signal_get(name) + "!" })
+
+// Derived reads the current signal values
+let r1 = signal_get(greeting)
+let r2 = signal_get(doubled)
+
+signal_set(count, 10)
+
+// After changing count, doubled recomputes automatically
+let r3 = signal_get(doubled)
+
+// --- Stable element identity ---
+let Div = fn(props) { props }
+
+// First render pass: elements get sequential slot IDs
+__begin_render()
+let e1 = __element(Div, {id: "header", class: "main"})
+let e2 = __element(Div, {id: "body", class: "content"})
+
+// Second render pass: same slots, same identity
+__begin_render()
+let e3 = __element(Div, {id: "header", class: "updated"})
+let e4 = __element(Div, {id: "body", class: "content"})
+
+// The result: e3 and e4 get the same slot IDs as e1 and e2
+{
+  greeting: r1,
+  doubled_before: r2,
+  doubled_after: r3,
+  slot_e1: e1.__id,
+  slot_e2: e2.__id,
+  slot_e3: e3.__id,
+  slot_e4: e4.__id,
+  props_updated: e3.__props.class
+}

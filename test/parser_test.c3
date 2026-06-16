@@ -15,6 +15,8 @@ import std::io;
 
 fn Value run_parsed(String src)
 {
+	g_element_slot = 0;
+	g_element_slots = {};
 	Env* env = make_builtin_env();
 	ParseResult pr = parse_source(src);
 	if (pr.error)
@@ -240,4 +242,129 @@ fn void test_named_fn_with_type_annotations() @test
 	// fn add(a: Number, b: Number) { a + b }; add(3, 4)  =>  7
 	Value v = run_parsed("fn add(a: Number, b: Number) { a + b }; add(3, 4)");
 	assert(as_num(v) == 7.0);
+}
+
+// ============================================================================
+// Block expressions
+// ============================================================================
+
+fn void test_block_expr_empty() @test
+{
+	Value v = run_parsed("{}");
+	assert(is_nil(v));
+}
+
+fn void test_block_expr_single() @test
+{
+	Value v = run_parsed("{ 42 }");
+	assert(as_num(v) == 42.0);
+}
+
+fn void test_block_expr_seq() @test
+{
+	// Last expression is the block's value
+	Value v = run_parsed("{ 1; 2; 3 }");
+	assert(as_num(v) == 3.0);
+}
+
+fn void test_block_expr_let_binding() @test
+{
+	Value v = run_parsed("{ let x = 10; x + 1 }");
+	assert(as_num(v) == 11.0);
+}
+
+fn void test_block_expr_fn_declaration() @test
+{
+	Value v = run_parsed("{ let double = fn(n) { n * 2 }; double(21) }");
+	assert(as_num(v) == 42.0);
+}
+
+fn void test_block_expr_nested_let() @test
+{
+	Value v = run_parsed("{ let a = 3; let b = 4; a + b }");
+	assert(as_num(v) == 7.0);
+}
+
+fn void test_block_expr_record_still_works() @test
+{
+	// IDENT ":" → record literal, not block
+	Value v = run_parsed("let r = { x: 1, y: 2 }; r.x + r.y");
+	assert(as_num(v) == 3.0);
+}
+
+fn void test_block_expr_in_let() @test
+{
+	Value v = run_parsed("let x = { let a = 5; a * 2 }; x + 1");
+	assert(as_num(v) == 11.0);
+}
+
+fn void test_block_expr_with_fn_decl() @test
+{
+	// fn declaration inside a block expression
+	Value v = run_parsed("{ fn add(a, b) { a + b }; add(3, 4) }");
+	assert(as_num(v) == 7.0);
+}
+
+fn void test_block_expr_nested_blocks() @test
+{
+	Value v = run_parsed("{ let x = { 10 }; let y = { 20 }; x + y }");
+	assert(as_num(v) == 30.0);
+}
+
+// ============================================================================
+// $ signal sugar
+// ============================================================================
+
+fn void test_signal_sugar_let_init() @test
+{
+	// let $x = 10  →  let x = signal(10)
+	Value v = run_parsed("let $x = 10; $x");
+	assert(as_num(v) == 10.0);
+}
+
+fn void test_signal_sugar_set() @test
+{
+	// $x = 42  →  signal_set(x, 42)  →  returns 42
+	Value v = run_parsed("let $x = 10; $x = 42; $x");
+	assert(as_num(v) == 42.0);
+}
+
+fn void test_signal_sugar_multiple() @test
+{
+	Value v = run_parsed("let $a = 1; let $b = 2; $a + $b");
+	assert(as_num(v) == 3.0);
+}
+
+// ============================================================================
+// from...import
+// ============================================================================
+
+fn void test_from_import_single() @test
+{
+	Value v = run_parsed("from signals import { get }; let $x = 99; get(x)");
+	assert(as_num(v) == 99.0);
+}
+
+fn void test_from_import_multiple() @test
+{
+	Value v = run_parsed("from signals import { get, set }; let $x = 10; set(x, 20); get(x)");
+	assert(as_num(v) == 20.0);
+}
+
+fn void test_from_import_with_sugar() @test
+{
+	Value v = run_parsed("from signals import { get }; let $score = 5; $score = 15; get(score)");
+	assert(as_num(v) == 15.0);
+}
+
+fn void test_string_interning() @test
+{
+	// Same string literal evaluated twice must produce the same Value bits.
+	Value v1 = run_parsed("\"hello\"");
+	Value v2 = run_parsed("\"hello\"");
+	Value v3 = run_parsed("\"world\"");
+	assert(is_str(v1));
+	assert(is_str(v2));
+	assert(v1 == v2, "interned string values must be identical");
+	assert(v1 != v3, "different strings must differ");
 }

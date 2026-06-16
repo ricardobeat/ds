@@ -11,12 +11,19 @@
 "try" @keyword
 "catch" @keyword
 "match" @keyword
+"and" @keyword
+"or" @keyword
+
+; ── Import / type keywords (qualified to avoid Zed parser issues) ─
+(import_declaration "from" @keyword)
+(import_declaration "import" @keyword)
+(type_declaration "type" @keyword)
 
 ; ── Literals ──────────────────────────────────────────────────
 (string) @string
 (number) @number
-(boolean) @constant.builtin
-(nil_literal) @constant.builtin
+(boolean) @constant
+(nil_literal) @constant
 
 ; ── Operators ─────────────────────────────────────────────────
 "=" @operator
@@ -33,37 +40,40 @@
 ".." @operator
 "!" @operator
 "->" @operator
+"??" @operator
 
-; ── Logical keywords used as operators ────────────────────────
-"and" @keyword.operator
-"or" @keyword.operator
+; ── Signal sugar ──────────────────────────────────────────────
+"$" @punctuation
+
+(signal_read
+  name: (identifier) @variable)
+
+(signal_write
+  name: (identifier) @variable)
 
 ; ── Punctuation ───────────────────────────────────────────────
-"(" @punctuation.bracket
-")" @punctuation.bracket
-"[" @punctuation.bracket
-"]" @punctuation.bracket
-"{" @punctuation.bracket
-"}" @punctuation.bracket
-"," @punctuation.delimiter
-";" @punctuation.delimiter
-":" @punctuation.delimiter
-"." @punctuation.delimiter
+"(" @punctuation
+")" @punctuation
+"[" @punctuation
+"]" @punctuation
+"{" @punctuation
+"}" @punctuation
+"," @punctuation
+";" @punctuation
+":" @punctuation
+"." @punctuation
 
 ; ── Functions ─────────────────────────────────────────────────
-(fn_expression
-  "fn" @keyword.function)
-
 (call_expression
-  function: (identifier) @function.call)
+  function: (identifier) @function)
 
 (call_expression
   function: (member_expression
-    property: (identifier) @function.method.call))
+    property: (identifier) @function))
 
 ; ── Parameters ────────────────────────────────────────────────
 (parameter
-  name: (identifier) @variable.parameter)
+  name: (identifier) @variable)
 
 ; ── Fields ────────────────────────────────────────────────────
 (field
@@ -77,12 +87,49 @@
 (let_declaration
   name: (identifier) @variable)
 
+; ── Import bindings ───────────────────────────────────────────
+(import_declaration
+  module: (identifier) @namespace)
+
+(import_declaration
+  (identifier) @variable)
+
+; ── Type declarations ─────────────────────────────────────────
+(type_declaration
+  name: (identifier) @type)
+
+; ── Functions (named) ─────────────────────────────────────────
+(fn_declaration
+  name: (identifier) @function)
+
+(fn_declaration
+  return_type: (type_name) @type)
+
+; ── Destructuring parameters ───────────────────────────────────
+(destructure_parameter
+  field: (identifier) @variable)
+
 ; ── Match ─────────────────────────────────────────────────────
 (match_arm
   tag: (upper_identifier) @constructor)
 
 (match_arm
-  binding: (identifier) @variable.parameter)
+  binding: (identifier) @variable)
+
+; ── Primitive match ────────────────────────────────────────────
+(primitive_match_arm
+  pattern: (string) @string)
+
+(primitive_match_arm
+  pattern: (number) @number)
+
+(primitive_match_arm
+  pattern: (boolean) @constant)
+
+(primitive_match_arm
+  pattern: (nil_literal) @constant)
+
+(wildcard) @variable.special
 
 ; ── Elements (JSX-like) ───────────────────────────────────────
 (element_expression
@@ -95,7 +142,7 @@
   close_tag: (identifier) @tag)
 
 (element_attribute
-  name: (identifier) @attribute)
+  name: (identifier) @tag)
 
 (element_attribute
   value: (string) @string)

@@ -1,0 +1,18 @@
+// rawtest.ds — diagnostic: does raw mode + read work?
+loadlib("build/libterm.dylib")
+term_raw()
+term_write("Raw mode active. Type keys, q to quit.\r\n")
+
+let count = 0
+let loop = fn() {
+  let key = term_read_key()
+  let _ = if key != nil then {
+    count = count + 1
+    term_write("Got: ", key, "\r\n")
+    if key === 113 then nil else loop()
+  } else loop()
+}
+loop()
+
+term_restore()
+term_write("Done. count = ", count, "\r\n")

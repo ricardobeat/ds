@@ -22,3 +22,18 @@ test:
 # Run benchmarks
 bench: build
     ./benchmarks/run.sh
+
+# Build and run the todo TUI app (DS-scripted)
+todo:
+    c3c build todo && ./build/todo
+
+# Build and run the raylib 3D demo
+raylib: build-raylib-plugin
+    ./build/engine run examples/raylib_demo.ds
+
+# Build the raylib plugin dylib
+build-raylib-plugin:
+    cc -shared -o build/libraylib.dylib plugins/raylib/raylib.c \
+        -I/opt/homebrew/include -L/opt/homebrew/lib -lraylib \
+        -framework OpenGL -framework Cocoa -framework IOKit \
+        -framework CoreAudio -framework CoreVideo

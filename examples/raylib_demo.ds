@@ -1,0 +1,185 @@
+// raylib_demo.ds — 3D demo using the raylib plugin
+//
+// Build plugin: cc -shared -o build/libraylib.dylib plugins/raylib/raylib.c \
+//               -I/opt/homebrew/include -L/opt/homebrew/lib -lraylib \
+//               -framework OpenGL -framework Cocoa -framework IOKit \
+//               -framework CoreAudio -framework CoreVideo
+// Run: ./build/engine run examples/raylib_demo.ds
+
+from "./build/libraylib" import *
+from signals import { signal }
+
+// -- Setup --
+rl_init_window(1280, 720, "DS + Raylib 3D Demo")
+rl_set_target_fps(60)
+
+// -- Camera state as signal (pos.xyz, target.xyz, up.xyz, fovy, projection) --
+let $cam = [10, 10, 10, 0, 0, 0, 0, 1, 0, 45, 0]
+
+// -- Key constants --
+let KEY_W = 87
+let KEY_S = 83
+let KEY_A = 65
+let KEY_D = 68
+let KEY_Q = 81
+let KEY_E = 69
+let KEY_RIGHT = 262
+let KEY_LEFT  = 263
+let KEY_DOWN  = 264
+let KEY_UP    = 265
+
+// -- Simple math --
+let sin_approx = fn(x) {
+  let pi = 3.14159265358979
+  let two_pi = pi * 2
+  let reduce = fn(v) { if v > two_pi then reduce(v - two_pi) else if v < 0 then reduce(v + two_pi) else v }
+  let xr = reduce(x)
+  let x2 = xr * xr
+  let x3 = x2 * xr
+  let x5 = x3 * x2
+  let x7 = x5 * x2
+  xr - x3 / 6.0 + x5 / 120.0 - x7 / 5040.0
+}
+
+let cos_approx = fn(x) {
+  let pi = 3.14159265358979
+  sin_approx(x + pi / 2.0)
+}
+
+// Newton-Raphson sqrt for XZ-plane normalization.
+let sqrt_approx = fn(x) {
+  if x <= 0.0 then 0.0
+  else {
+    let y = x * 0.5
+    let y = (y + x / y) * 0.5
+    let y = (y + x / y) * 0.5
+    let y = (y + x / y) * 0.5
+    y
+  }
+}
+
+// -- Camera helper --
+let mk_cam = fn(px, py, pz, tx, ty, tz, ux, uy, uz, fovy, proj) {
+  let a = []
+  let _ = push(a, px)
+  let _ = push(a, py)
+  let _ = push(a, pz)
+  let _ = push(a, tx)
+  let _ = push(a, ty)
+  let _ = push(a, tz)
+  let _ = push(a, ux)
+  let _ = push(a, uy)
+  let _ = push(a, uz)
+  let _ = push(a, fovy)
+  let _ = push(a, proj)
+  a
+}
+
+// -- Camera update --
+// All controls use the same `speed` base value.  Yaw angular rate is
+// scaled so the target moves at `speed` world-units/sec tangentially,
+// matching the WASD and pitch translation rates.
+let update_camera = fn(c, dt) {
+  let speed = 8.0 / 3.0 * dt
+
+  // Normalized forward/right in the XZ plane.
+  let dx = c[3] - c[0]
+  let dz = c[5] - c[2]
+  let dist_sq = dx * dx + dz * dz
+  let look_len = if dist_sq > 0.001 then sqrt_approx(dist_sq) else 1.0
+  let fwd_x = dx / look_len
+  let fwd_z = dz / look_len
+  let right_x = fwd_z
+  let right_z = 0.0 - fwd_x
+
+  // Translation: speed world-units/sec (shared by WASD, Q/E).
+  let move   = if rl_is_key_down(KEY_W) then speed else if rl_is_key_down(KEY_S) then 0.0 - speed else 0.0
+  let strafe = if rl_is_key_down(KEY_D) then speed else if rl_is_key_down(KEY_A) then 0.0 - speed else 0.0
+  let vert   = if rl_is_key_down(KEY_Q) then speed else if rl_is_key_down(KEY_E) then 0.0 - speed else 0.0
+
+  let px = c[0] + fwd_x * move + right_x * strafe
+  let py = c[1] + vert
+  let pz = c[2] + fwd_z * move + right_z * strafe
+  let tx = c[3] + fwd_x * move + right_x * strafe
+  let ty = c[4] + vert
+  let tz = c[5] + fwd_z * move + right_z * strafe
+
+  // Yaw: tangential target speed == speed.  yaw_rad = speed / look_len.
+  let yaw_rate = speed / look_len
+  let yaw = if rl_is_key_down(KEY_RIGHT) then yaw_rate else if rl_is_key_down(KEY_LEFT) then 0.0 - yaw_rate else 0.0
+
+  let ndx = tx - px
+  let ndz = tz - pz
+  let cy = cos_approx(yaw)
+  let sy = sin_approx(yaw)
+  let rtx = px + ndx * cy - ndz * sy
+  let rtz = pz + ndx * sy + ndz * cy
+
+  // Pitch: vertical target speed == speed.
+  let rty = if rl_is_key_down(KEY_UP) then ty + speed else if rl_is_key_down(KEY_DOWN) then ty - speed else ty
+
+  mk_cam(px, py, pz, rtx, rty, rtz, c[6], c[7], c[8], c[9], c[10])
+}
+
+// -- Draw 3D scene --
+let draw_scene = fn(cam, t) {
+  let cube_y = 1.0 + sin_approx(t * 2.0) * 0.5
+  let sphere_x = cos_approx(t) * 3.0
+  let sphere_z = sin_approx(t) * 3.0
+  let cyl_x = cos_approx(t * 0.7) * 5.0
+  let cyl_z = sin_approx(t * 0.7) * 5.0
+
+  rl_begin_drawing()
+  rl_clear_background(20, 20, 30)
+
+  rl_begin_mode_3d(cam[0], cam[1], cam[2], cam[3], cam[4], cam[5],
+                   cam[6], cam[7], cam[8], cam[9], cam[10])
+
+  rl_draw_grid(20, 1.0)
+
+  // Red bouncing cube
+  rl_draw_cube(0, cube_y, 0, 2, 2, 2, 230, 41, 55)
+  rl_draw_cube_wires(0, cube_y, 0, 2, 2, 2, 255, 255, 255)
+
+  // Blue orbiting sphere
+  rl_draw_sphere(sphere_x, 1.5, sphere_z, 1.0, 0, 121, 241)
+
+  // Green cylinder
+  rl_draw_cylinder(cyl_x, 1.5, cyl_z, 0.8, 0.8, 3.0, 16, 0, 228, 48)
+  rl_draw_cylinder_wires(cyl_x, 1.5, cyl_z, 0.8, 0.8, 3.0, 16, 200, 200, 200)
+
+  // Yellow marker at origin
+  rl_draw_sphere(0, 0.3, 0, 0.3, 253, 249, 0)
+
+  // Ground plane
+  rl_draw_plane(0, 0, 0, 20, 20, 50, 50, 50)
+
+  // Axis lines: X=red Y=green Z=blue
+  rl_draw_line_3d(0, 0, 0, 3, 0, 0, 230, 41, 55)
+  rl_draw_line_3d(0, 0, 0, 0, 3, 0, 0, 228, 48)
+  rl_draw_line_3d(0, 0, 0, 0, 0, 3, 0, 121, 241)
+
+  rl_end_mode_3d()
+
+  // HUD
+  rl_draw_text("DS + Raylib 3D Demo", 10, 10, 20, 255, 255, 255)
+  rl_draw_text("WASD: move  Q/E: up/down  Arrows: rotate", 10, 40, 16, 180, 180, 180)
+  rl_draw_fps(1180, 10)
+
+  rl_end_drawing()
+}
+
+// -- Main loop --
+let loop = fn() {
+  if rl_window_should_close() then nil
+  else {
+    let dt = rl_get_frame_time()
+    let old_cam = $cam
+    $cam = update_camera(old_cam, dt)
+    draw_scene($cam, rl_get_time())
+    loop()
+  }
+}
+
+loop()
+rl_close_window()

@@ -5,6 +5,51 @@ import std::collections::map;
 import std::core::dstring;
 
 // ============================================================================
+// C INTEROP (plugin loading via dlopen)
+// ============================================================================
+
+extern fn void* dlopen(char* path, int mode);
+extern fn void* dlsym(void* handle, char* symbol);
+extern fn int dlclose(void* handle);
+const int RTLD_NOW = 2;
+
+// DsResult matches the C struct layout in ds_plugin.h: { ulong value; int thrown; }
+struct DsResult {
+	ulong value;
+	int thrown;
+}
+
+// C-side host function signature: DsResult fn(ulong* args, int nargs)
+alias DsCFn = fn DsResult(ulong* args, int nargs);
+
+// DsApi struct matches ds_plugin.h layout (12 function pointers, 8 bytes each).
+struct DsApi {
+	void* mk_num;
+	void* mk_nil;
+	void* mk_bool;
+	void* mk_str;
+	void* as_num;
+	void* as_bool;
+	void* is_num;
+	void* is_nil;
+	void* is_str;
+	void* as_cstr;
+	void* show;
+	void* register_fn;
+}
+
+// Plugin init signature: void ds_init(DsApi* api)
+alias DsInitFn = fn void(DsApi*);
+
+// Plugin C function pointers (parallel to g_host_fns, null for C3 functions).
+void*[MAX_HOST_FNS] g_c_host_fns;
+
+// Track loaded library handles for cleanup.
+const int MAX_LIBS = 8;
+void*[MAX_LIBS] g_lib_handles;
+int g_lib_count = 0;
+
+// ============================================================================
 // TYPES (Rung 1 + Rung 2 surface types)
 // ============================================================================
 // 
@@ -121,6 +166,7 @@ const ulong TAG_ARRAY   = 0x7FFF000000000000UL;
 const ulong TAG_RECORD  = 0x7FF9000000000000UL;
 const ulong TAG_CLOSURE = 0x7FFA000000000000UL;
 const ulong TAG_PRIM    = 0x7FFB000000000000UL;
+const ulong TAG_SIGNAL  = 0x7FF8000000000000UL;
 
 // High bit in Env.count signals "this Env doubles as a closure" — its
 // union carries closure_params instead of bindings.
@@ -134,6 +180,7 @@ fn Value val_arr(Array* p)   => (Value)(TAG_ARRAY  | ((ulong)(uptr)p & PTR_MASK)
 fn Value val_rec(Record* p)  => (Value)(TAG_RECORD | ((ulong)(uptr)p & PTR_MASK));
 fn Value val_closure(Closure* p) => (Value)(TAG_CLOSURE | ((ulong)(uptr)p & PTR_MASK));
 fn Value val_prim(Prim* p)   => (Value)(TAG_PRIM   | ((ulong)(uptr)p & PTR_MASK));
+fn Value val_signal(Signal* p)  => (Value)(TAG_SIGNAL  | ((ulong)(uptr)p & PTR_MASK));
 
 fn bool   is_num(Value v)    => ((ulong)v & NAN_BITS) != NAN_BITS;
 fn bool   is_nil(Value v)    => (ulong)v == TAG_NIL;
@@ -143,6 +190,7 @@ fn bool   is_arr(Value v)    => ((ulong)v & TAG_MASK) == TAG_ARRAY;
 fn bool   is_rec(Value v)    => ((ulong)v & TAG_MASK) == TAG_RECORD;
 fn bool   is_closure(Value v) => ((ulong)v & TAG_MASK) == TAG_CLOSURE;
 fn bool   is_prim(Value v)   => ((ulong)v & TAG_MASK) == TAG_PRIM;
+fn bool   is_signal(Value v)  => ((ulong)v & TAG_MASK) == TAG_SIGNAL;
 
 fn double   as_num(Value v)    => bitcast((ulong)v, double);
 fn bool     as_bool(Value v)   => (bool)((ulong)v & 1);
@@ -151,6 +199,7 @@ fn Array*   as_arr(Value v)    => (Array*)(uptr)((ulong)v & PTR_MASK);
 fn Record*  as_rec(Value v)    => (Record*)(uptr)((ulong)v & PTR_MASK);
 fn Closure* as_closure(Value v) => (Closure*)(uptr)((ulong)v & PTR_MASK);
 fn Prim*    as_prim(Value v)   => (Prim*)(uptr)((ulong)v & PTR_MASK);
+fn Signal*  as_signal(Value v)  => (Signal*)(uptr)((ulong)v & PTR_MASK);
 
 // Convenience tag enum for runtime type queries / debug printing.
 // Numeric values match the `ordinal()` of the old ValueType for tests
@@ -164,6 +213,7 @@ enum ValueTag : int {
 	RECORD,
 	CLOSURE,
 	PRIMITIVE,
+	SIGNAL,
 }
 
 fn ValueTag tag_of(Value v) {
@@ -201,12 +251,17 @@ struct InternTable {
 
 InternTable g_intern;
 
+// Stable heap allocator for global intern tables. Using the libc allocator
+// directly bypasses the per-test tracking allocator so that intern entries
+// are not reported as "leaks" by the test framework.
+const Allocator INTERN_ALLOC = &allocators::LIBC_ALLOCATOR;
+
 fn void intern_init() {
-	g_intern.fwd = mem::new(HashMap{String, uint});
-	g_intern.fwd.init(mem, 64);
+	g_intern.fwd = alloc::new(INTERN_ALLOC, HashMap{String, uint});
+	g_intern.fwd.init(INTERN_ALLOC, 64);
 	g_intern.count = 0;
 	g_intern.cap = 32;
-	g_intern.rev = mem::new_array(String, g_intern.cap);
+	g_intern.rev = alloc::new_array(INTERN_ALLOC, String, g_intern.cap);
 }
 
 // Look up (or allocate) an atom ID for `s`.  The string is copied into
@@ -218,10 +273,10 @@ fn uint intern(String s) {
 	if (try id = g_intern.fwd.get(s)) return id;
 	if (g_intern.count >= g_intern.cap) {
 		uint new_cap = g_intern.cap * 2;
-		g_intern.rev = alloc::realloc_array(mem, g_intern.rev, String, new_cap);
+		g_intern.rev = alloc::realloc_array(INTERN_ALLOC, g_intern.rev, String, new_cap);
 		g_intern.cap = new_cap;
 	}
-	String heap_s = s.copy(mem);
+	String heap_s = s.copy(INTERN_ALLOC);
 	g_intern.count++;
 	g_intern.rev[g_intern.count - 1] = heap_s;
 	g_intern.fwd.set(heap_s, g_intern.count);
@@ -269,6 +324,43 @@ struct Prim {
 }
 
 // ============================================================================
+// REACTIVE TYPES (signals + derived)
+// ============================================================================
+//
+// Signal: a mutable reactive cell.  signal_set notifies all subscribers.
+// When kind == DERIVED, it is a lazy computed value that caches its result
+// and re-evaluates only when a dependency changes and its value is read.
+// DepNode: intrusive linked-list node for the subscriber/dep chains.
+
+enum SignalKind : char { SIG_PLAIN, SIG_DERIVED }
+
+struct DepNode {
+	DepNode* next;
+	Value    target;  // TAG_SIGNAL Value (NaN-boxed pointer)
+}
+
+struct Signal {
+	uint       refcount;
+	SignalKind kind;
+	Value      current;    // SIG_PLAIN: the stored value; SIG_DERIVED: cached result
+	bool       dirty;      // SIG_DERIVED only
+	bool       running;    // SIG_DERIVED only (circular dep guard)
+	Closure*   closure;    // SIG_DERIVED only (0-arg computation)
+	DepNode*   deps;       // SIG_DERIVED only (what I depend on)
+	DepNode*   subs;       // both: who depends on me
+}
+
+fn bool signal_is_derived(Signal* s) => s.kind == SIG_DERIVED;
+
+// An active effect: a closure that re-runs when its deps change.
+struct Effect {
+	Closure* func;
+	DepNode* deps;
+	Effect*  next;        // global linked list of all active effects
+	bool     running;     // guard against re-entrant re-runs
+}
+
+// ============================================================================
 // AST NODES (kernel + a few surface that are still in the file for tests)
 // ============================================================================
 // 
@@ -288,6 +380,7 @@ enum NodeType : char {
 	ARRAY_LIT,
 	THROW,
 	TRY,
+	NULLCOAL,  // a ?? b: rhs when lhs throws or is nil
 	PRIM,
 	LETREC,
 	SEQ,        // surface: sequential evaluation; desugars to ignored-binding lambdas
@@ -302,6 +395,7 @@ enum NodeType : char {
 	TYPEDEF,   // surface: register a type name in tenv, emit body
 	CONSTRUCT, // surface: tagged value; desugars to Record with __tag/__val
 	MATCH,     // surface: pattern match; desugars to If-chain on __tag
+	PMATCH,    // surface: primitive match on literals; desugars to If-chain on ===
 }
 
 struct TypeDefEntry {
@@ -323,6 +417,7 @@ struct AstNode {
 	Type*[] param_types;
 	Type* ret_type;
 	Type* ann_type; // LET_T: type of the initializer
+	long line; // source line (1-indexed), 0 = unknown
 }
 
 // ============================================================================
@@ -390,6 +485,37 @@ fn Value mk_str(String s) {
 	return val_str(p);
 }
 
+// String intern table: content → stable heap-allocated Value.
+// Same string content always returns the same Value bits, enabling
+// fingerprint cache hits in __element without deep equality checks.
+HashMap{String, Value}* g_str_intern;
+HashMap{String, Value}* g_rec_intern;
+
+fn void str_intern_init() {
+	g_str_intern = alloc::new(INTERN_ALLOC, HashMap{String, Value});
+	g_str_intern.init(INTERN_ALLOC, 128);
+}
+
+fn void rec_intern_init() {
+	g_rec_intern = alloc::new(INTERN_ALLOC, HashMap{String, Value});
+	g_rec_intern.init(INTERN_ALLOC, 128);
+}
+
+// mk_str_intern: intern a string literal. Returns a stable Value whose
+// pointer bits are identical for identical string content. Only call this
+// for immutable string literals, not for dynamically constructed strings
+// (concat results, error messages) — those would fill the table unboundedly.
+fn Value mk_str_intern(String s) {
+	if (g_str_intern == null) str_intern_init();
+	if (try v = g_str_intern.get(s)) return v;
+	String* p = alloc::new(INTERN_ALLOC, String);  // stable across frames and tests
+	*p = s.copy(INTERN_ALLOC);
+	Value v = val_str(p);
+	g_str_intern.set(*p, v);        // key is the heap copy; content-equal lookups will hit
+	return v;
+}
+
+
 // mk_prim: the prim carries a name; we now put the `Prim` struct on the
 // heap so the 8-byte Value can point at it.
 fn Value mk_prim(String n) {
@@ -398,12 +524,18 @@ fn Value mk_prim(String n) {
 	return val_prim(p);
 }
 
+ulong g_alloc_arrays;
+ulong g_alloc_records;
+bool  g_alloc_tracking;
+
 fn Array* new_array() {
+	if (g_alloc_tracking) g_alloc_arrays++;
 	Array* a = mem::new(Array);
 	a.refcount = 1;
 	return a;
 }
 fn Record* new_record() {
+	if (g_alloc_tracking) g_alloc_records++;
 	Record* r = mem::new(Record);
 	r.refcount = 1;
 	return r;
@@ -417,6 +549,41 @@ fn Prim* new_prim(String n) {
 	Prim* p = mem::tnew(Prim);
 	p.name = n;
 	return p;
+}
+
+fn Signal* new_signal(Value init) {
+	Signal* s = mem::new(Signal);
+	s.refcount = 1;
+	s.kind = SIG_PLAIN;
+	s.current = init;
+	s.dirty = false;
+	s.running = false;
+	s.closure = null;
+	s.deps = null;
+	s.subs = null;
+	return s;
+}
+
+fn Signal* new_derived(Closure* closure) {
+	Signal* s = mem::new(Signal);
+	s.refcount = 1;
+	s.kind = SIG_DERIVED;
+	s.current = mk_nil();
+	s.dirty = true;
+	s.running = false;
+	s.closure = closure;
+	s.deps = null;
+	s.subs = null;
+	return s;
+}
+
+fn Effect* new_effect(Closure* func) {
+	Effect* e = mem::new(Effect);
+	e.func = func;
+	e.deps = null;
+	e.next = null;
+	e.running = false;
+	return e;
 }
 
 fn AstNode* make_lit(Value v) {
@@ -536,6 +703,16 @@ fn AstNode* make_try(AstNode* body, String cname, AstNode* handler) {
 	AstNode*[] kids = mem::talloc_array(AstNode*, 2);
 	kids[0] = body;
 	kids[1] = handler;
+	n.children = kids;
+	return n;
+}
+
+fn AstNode* make_nullcoal(AstNode* lhs, AstNode* rhs) {
+	AstNode* n = mem::tnew(AstNode);
+	n.type = NULLCOAL;
+	AstNode*[] kids = mem::talloc_array(AstNode*, 2);
+	kids[0] = lhs;
+	kids[1] = rhs;
 	n.children = kids;
 	return n;
 }
@@ -682,6 +859,26 @@ fn AstNode* make_match(AstNode* scrut, String[] tags, String[] binds, AstNode*[]
 	return n;
 }
 
+// make_pmatch: primitive match on literals or variable patterns.
+// pattern_nodes[i] is:
+//   make_lit(val)  — match by value (=== val)
+//   make_var("_")  — wildcard (catch-all)
+//   make_var(name) — variable pattern (=== name looked up in env)
+// children = [scrut, pat0, body0, pat1, body1, ...]
+fn AstNode* make_pmatch(AstNode* scrut, AstNode*[] pattern_nodes, AstNode*[] bodies) {
+	assert(pattern_nodes.len == bodies.len);
+	AstNode* n = mem::tnew(AstNode);
+	n.type = PMATCH;
+	AstNode*[] kids = mem::talloc_array(AstNode*, 1 + 2 * bodies.len);
+	kids[0] = scrut;
+	for (int i = 0; i < bodies.len; i++) {
+		kids[1 + 2 * i]     = pattern_nodes[i];
+		kids[1 + 2 * i + 1] = bodies[i];
+	}
+	n.children = kids;
+	return n;
+}
+
 fn bool strict_eq(Value a, Value b) {
 	if ((ulong)a != (ulong)b) {
 		// Different raw bits — could still be equal NaN numbers; we
@@ -753,6 +950,16 @@ fn Value show(Value v) {
 		return mk_str(buf.str_view());
 	}
 	if (is_prim(v)) return mk_str(string::tformat("<prim %s>", as_prim(v).name));
+	if (is_signal(v)) {
+		Signal* sig = as_signal(v);
+		if (signal_is_derived(sig)) {
+			if (sig.dirty) return mk_str("<derived (dirty)>");
+			Value s = show(sig.current);
+			return mk_str(string::tformat("<derived %s>", *as_str(s)));
+		}
+		Value s = show(sig.current);
+		return mk_str(string::tformat("<signal %s>", *as_str(s)));
+	}
 	return mk_nil();
 }
 
@@ -953,6 +1160,15 @@ fn bool register_host_fn(String name, HostFn func) {
 	return true;
 }
 
+fn bool register_c_host_fn(String name, void* c_fn) {
+	if (g_host_fn_count >= MAX_HOST_FNS) return false;
+	g_host_fn_names[g_host_fn_count] = name;
+	g_host_fns[g_host_fn_count] = null;
+	g_c_host_fns[g_host_fn_count] = c_fn;
+	g_host_fn_count++;
+	return true;
+}
+
 fn bool has_host_fn(String name) {
 	for (int i = 0; i < g_host_fn_count; i++) {
 		if (name == g_host_fn_names[i]) return true;
@@ -962,9 +1178,251 @@ fn bool has_host_fn(String name) {
 
 fn EvalResult call_host_fn(String name, Value[] args) {
 	for (int i = 0; i < g_host_fn_count; i++) {
-		if (name == g_host_fn_names[i]) return g_host_fns[i](args);
+		if (name == g_host_fn_names[i]) {
+			if (g_c_host_fns[i] != null) return call_c_plugin(g_c_host_fns[i], args);
+			return g_host_fns[i](args);
+		}
 	}
 	return { .thrown = true, .value = mk_str("host function not found") };
+}
+
+// Adapter: convert between C3 Value[] and C DsValue*/nargs, call the C function.
+fn EvalResult call_c_plugin(void* c_fn, Value[] args) {
+	ulong[16] c_args;
+	int nargs = (int)args.len;
+	for (int i = 0; i < nargs && i < 16; i++) {
+		c_args[i] = (ulong)args[i];
+	}
+	DsCFn fn_ptr = (DsCFn)c_fn;
+	DsResult r = fn_ptr(&c_args, nargs);
+	return { .thrown = r.thrown != 0, .value = (Value)r.value };
+}
+
+// ============================================================================
+// PLUGIN API (DsApi wrappers + loadlib primitive)
+// ============================================================================
+
+fn ulong api_mk_num(double d) => (ulong)mk_num(d);
+fn ulong api_mk_nil() => (ulong)mk_nil();
+fn ulong api_mk_bool(int b) => (ulong)mk_bool(b != 0);
+fn double api_as_num(ulong v) => as_num((Value)v);
+fn int api_as_bool(ulong v) => as_bool((Value)v) ? 1 : 0;
+fn int api_is_num(ulong v) => is_num((Value)v) ? 1 : 0;
+fn int api_is_nil(ulong v) => is_nil((Value)v) ? 1 : 0;
+fn int api_is_str(ulong v) => is_str((Value)v) ? 1 : 0;
+
+fn ulong api_mk_str(char* c) {
+	sz len = 0;
+	while (c[len] != 0) len++;
+	String s = (String)c[0:len];
+	return (ulong)mk_str(s);
+}
+
+fn char* api_as_cstr(ulong v) {
+	String* sp = as_str((Value)v);
+	return sp.ptr;
+}
+
+fn char* api_show(ulong v) {
+	Value s = show((Value)v);
+	String* sp = as_str(s);
+	return sp.ptr;
+}
+
+fn int api_register_fn(char* name, void* c_fn) {
+	sz len = 0;
+	while (name[len] != 0) len++;
+	String s = (String)name[0:len];
+	bool ok = register_c_host_fn(s, c_fn);
+	if (ok && builtin_env != null) {
+		uint id = intern(s);
+		Binding new_binding = { .name_id = id, .value = mk_prim(s) };
+		Binding* old = builtin_env.data.bindings_ptr;
+		uint n = builtin_env.count;
+		Binding* grown = mem::talloc_array(Binding, (sz)(n + 1));
+		for (uint i = 0; i < n; i++) grown[i] = old[i];
+		grown[n] = new_binding;
+		builtin_env.data.bindings_ptr = grown;
+		builtin_env.count = n + 1;
+	}
+	return ok ? 1 : 0;
+}
+
+// Platform-specific shared library extension.
+// On Linux: const String SHARED_LIB_EXT = ".so";
+// On Windows: const String SHARED_LIB_EXT = ".dll";
+const String SHARED_LIB_EXT = ".dylib";
+
+fn EvalResult loadlib_fn(Value[] args) {
+	if (!is_str(args[0])) {
+		return { .thrown = true, .value = mk_str("loadlib expects a string path") };
+	}
+	char* path = as_str(args[0]).ptr;
+	void* handle = dlopen(path, RTLD_NOW);
+	if (handle == null) {
+		// Try with platform-specific extension
+		DString buf; buf.tinit();
+		buf.append(*as_str(args[0]));
+		buf.append(SHARED_LIB_EXT);
+		handle = dlopen(buf.str_view().ptr, RTLD_NOW);
+	}
+	if (handle == null) {
+		return { .thrown = true, .value = mk_str("loadlib: failed to open library") };
+	}
+	void* init_sym = dlsym(handle, "ds_init");
+	if (init_sym == null) {
+		dlclose(handle);
+		return { .thrown = true, .value = mk_str("loadlib: no ds_init symbol found") };
+	}
+	DsApi* api = mem::new(DsApi);
+	api.mk_num      = (void*)&api_mk_num;
+	api.mk_nil      = (void*)&api_mk_nil;
+	api.mk_bool     = (void*)&api_mk_bool;
+	api.mk_str      = (void*)&api_mk_str;
+	api.as_num      = (void*)&api_as_num;
+	api.as_bool     = (void*)&api_as_bool;
+	api.is_num      = (void*)&api_is_num;
+	api.is_nil      = (void*)&api_is_nil;
+	api.is_str      = (void*)&api_is_str;
+	api.as_cstr     = (void*)&api_as_cstr;
+	api.show        = (void*)&api_show;
+	api.register_fn = (void*)&api_register_fn;
+	DsInitFn init_fn = (DsInitFn)init_sym;
+	init_fn(api);
+	if (g_lib_count < MAX_LIBS) {
+		g_lib_handles[g_lib_count] = handle;
+		g_lib_count++;
+	}
+	return { .value = mk_nil() };
+}
+
+// ============================================================================
+// REACTIVE MACHINERY (signals, derived, effects)
+// ============================================================================
+
+// Global subscriber tracking: when non-null, any signal_get will register
+// the active subscriber as a dependency of the signal being read.
+void*  g_active_subscriber;   // Effect* or Derived*
+bool   g_active_is_derived;
+
+// Global linked list of all active effects (for cleanup).
+Effect* g_effects;
+
+// Element stable-ref state.
+// Slots are assigned in render-tree order (depth-first). Each slot caches the
+// last component result and an input fingerprint (props Value + children Values).
+// If the fingerprint matches on the next render pass, the cached result is returned
+// without re-invoking the component function.
+const int MAX_ELEMENT_SLOTS = 4096;
+
+struct ElementSlot {
+	bool     used;
+	Value    result;        // last return value from the component
+	Value    fingerprint;   // NaN-boxed: XOR of all input Values (props + children)
+}
+
+int          g_element_slot;
+ElementSlot[MAX_ELEMENT_SLOTS] g_element_slots;
+
+fn void dep_push(DepNode** list, Value target) {
+	// Avoid duplicate entries — check if target already in list.
+	for (DepNode* n = *list; n != null; n = n.next) {
+		if (n.target == target) return;
+	}
+	DepNode* node = mem::new(DepNode);
+	node.next = *list;
+	node.target = target;
+	*list = node;
+}
+
+// Register a signal read: link the signal to the active subscriber bidirectionally.
+fn void reactive_track(Signal* sig) {
+	if (g_active_subscriber == null) return;
+	Value sig_val = val_signal(sig);
+	// Add signal to the active subscriber's dep list.
+	if (g_active_is_derived) {
+		Signal* sub = (Signal*)(uptr)g_active_subscriber;
+		dep_push(&sub.deps, sig_val);
+	} else {
+		Effect* e = (Effect*)(uptr)g_active_subscriber;
+		dep_push(&e.deps, sig_val);
+	}
+	// Add the active subscriber to the signal's sub list.
+	// Encode derived subscribers as TAG_SIGNAL, effect subscribers as TAG_CLOSURE.
+	if (g_active_is_derived) {
+		dep_push(&sig.subs, val_signal((Signal*)(uptr)g_active_subscriber));
+	} else {
+		dep_push(&sig.subs, val_closure(((Effect*)(uptr)g_active_subscriber).func));
+	}
+}
+
+// Mark a derived (and transitively its derived subscribers) as needing recomputation.
+fn void mark_dirty(Signal* d) {
+	if (d.dirty) return;
+	d.dirty = true;
+	for (DepNode* sub = d.subs; sub != null; sub = sub.next) {
+		if (is_signal(sub.target)) {
+			Signal* s = as_signal(sub.target);
+			if (signal_is_derived(s)) mark_dirty(s);
+		}
+	}
+}
+
+// Re-run an effect: clear its old deps, invoke the closure with tracking on.
+fn void effect_rerun(Effect* e) {
+	if (e.running) return; // prevent re-entrant re-runs
+	e.running = true;
+	void* prev_sub = g_active_subscriber;
+	bool prev_kind = g_active_is_derived;
+	g_active_subscriber = e;
+	g_active_is_derived = false;
+	e.deps = null;
+	// Use eval directly (apply_fn returns tail-call thunks).
+	eval(e.func.body, e.func.env);
+	g_active_subscriber = prev_sub;
+	g_active_is_derived = prev_kind;
+	e.running = false;
+}
+
+// Walk a subscriber list: mark deriveds dirty, re-run effects.
+fn void notify_subs(DepNode* subs) {
+	for (DepNode* sub = subs; sub != null; sub = sub.next) {
+		if (is_signal(sub.target)) {
+			Signal* s = as_signal(sub.target);
+			if (signal_is_derived(s)) mark_dirty(s);
+		} else if (is_closure(sub.target)) {
+			for (Effect* e = g_effects; e != null; e = e.next) {
+				if (val_closure(e.func) == sub.target) {
+					effect_rerun(e);
+					break;
+				}
+			}
+		}
+	}
+}
+
+// Evaluate a derived: recompute if dirty, cache the result.
+fn Value derived_evaluate(Signal* d) {
+	if (!d.dirty) return d.current;
+	if (d.running) return d.current;
+	d.running = true;
+	void* prev_sub = g_active_subscriber;
+	bool prev_kind = g_active_is_derived;
+	g_active_subscriber = d;
+	g_active_is_derived = true;
+	d.deps = null;
+	// Use eval() directly (not apply_fn, which returns tail-call thunks).
+	Env* call_env = d.closure.env;
+	if (d.closure.param_ids.len > 0) {
+		call_env = env_extend(d.closure.env, d.closure.param_ids, {});
+	}
+	EvalResult r = eval(d.closure.body, call_env);
+	if (!r.thrown) d.current = r.value;
+	d.dirty = false;
+	d.running = false;
+	g_active_subscriber = prev_sub;
+	g_active_is_derived = prev_kind;
+	return d.current;
 }
 
 // ============================================================================
@@ -979,6 +1437,12 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 			}
 			if (is_str(args[0]) && is_str(args[1])) {
 				return { .value = mk_str((*as_str(args[0])).tconcat(*as_str(args[1]))) };
+			}
+			// Mixed string+number: coerce via show()
+			if (is_str(args[0]) || is_str(args[1])) {
+				Value s0 = is_str(args[0]) ? args[0] : show(args[0]);
+				Value s1 = is_str(args[1]) ? args[1] : show(args[1]);
+				return { .value = mk_str((*as_str(s0)).tconcat(*as_str(s1))) };
 			}
 			return { .thrown = true, .value = mk_str("type error: + expects number or string") };
 		case "-":
@@ -999,6 +1463,16 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 				return { .thrown = true, .value = mk_str("division by zero") };
 			}
 			return { .value = mk_num(as_num(args[0]) / as_num(args[1])) };
+		case "%":
+			if (!is_num(args[0]) || !is_num(args[1])) {
+				return { .thrown = true, .value = mk_str("type error: % expects numbers") };
+			}
+			if (as_num(args[1]) == 0.0) {
+				return { .thrown = true, .value = mk_str("division by zero") };
+			}
+			double a = as_num(args[0]);
+			double b = as_num(args[1]);
+			return { .value = mk_num(a - (double)((long)(a / b)) * b) };
 		case "===":
 			return { .value = mk_bool(strict_eq(args[0], args[1])) };
 		case "<":
@@ -1031,6 +1505,35 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 		case "is_array":  return { .value = mk_bool(is_arr(args[0])) };
 		case "is_record": return { .value = mk_bool(is_rec(args[0])) };
 		case "is_nil":    return { .value = mk_bool(is_nil(args[0])) };
+		case "record_spread":
+		{
+			// record_spread(base, overrides)  =>  new record with base fields + overrides on top
+			if (!is_rec(args[0])) return { .thrown = true, .value = mk_str("type error: record_spread expects record as first arg") };
+			if (!is_rec(args[1])) return { .thrown = true, .value = mk_str("type error: record_spread expects record as second arg") };
+			Record* base = as_rec(args[0]);
+			Record* over = as_rec(args[1]);
+			// Count unique keys: all base keys, plus override keys not in base
+			sz total = base.keys.len + over.keys.len;
+			uint[] out_keys = mem::talloc_array(uint, total);
+			Value[] out_vals = mem::talloc_array(Value, total);
+			sz n = 0;
+			// Copy base fields, skipping any that are overridden
+			for (sz i = 0; i < base.keys.len; i++) {
+				bool overridden = false;
+				for (sz j = 0; j < over.keys.len; j++) {
+					if (base.keys[i] == over.keys[j]) { overridden = true; break; }
+				}
+				if (!overridden) { out_keys[n] = base.keys[i]; out_vals[n] = base.values[i]; n++; }
+			}
+			// Append all override fields
+			for (sz i = 0; i < over.keys.len; i++) {
+				out_keys[n] = over.keys[i]; out_vals[n] = over.values[i]; n++;
+			}
+			Record* res = new_record();
+			res.keys   = out_keys[:n];
+			res.values = out_vals[:n];
+			return { .value = val_rec(res) };
+		}
 		case "has_field":
 			if (!is_rec(args[0])) {
 				return { .thrown = true, .value = mk_str("type error: has_field expects record") };
@@ -1057,12 +1560,12 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 			if (!is_arr(args[0])) {
 				return { .thrown = true, .value = mk_str("type error: push expects array") };
 			}
-			Array* a = as_arr(args[0]);
-			Value[] grown = mem::talloc_array(Value, a.items.len + 1);
-			for (int i = 0; i < a.items.len; i++) grown[i] = a.items[i];
-			grown[a.items.len] = args[1];
-			a.items = grown;
-			return { .value = mk_nil() };
+			Array* pa = as_arr(args[0]);
+			Value[] grown = mem::talloc_array(Value, pa.items.len + 1);
+			for (int i = 0; i < pa.items.len; i++) grown[i] = pa.items[i];
+			grown[pa.items.len] = args[1];
+			pa.items = grown;
+			return { .value = args[0] };
 		case "array_all":
 
 		{
@@ -1075,7 +1578,7 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 			}
 			Array* a = as_arr(args[0]);
 			foreach (&item : a.items) {
-				EvalResult r = apply_fn(args[1], { *item });
+				EvalResult r = call_fn(args[1], { *item });
 				if (r.thrown) return r;
 				if (!truthy(r.value)) return { .value = mk_bool(false) };
 			}
@@ -1105,12 +1608,208 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 			r.items = out;
 			return { .value = val_arr(r) };
 		}
+		case "map":
+		{
+			if (!is_arr(args[0])) return { .thrown = true, .value = mk_str("type error: map expects array") };
+			if (!is_closure(args[1]) && !is_prim(args[1])) return { .thrown = true, .value = mk_str("type error: map expects function") };
+			Array* a = as_arr(args[0]);
+			Value[] out = mem::talloc_array(Value, a.items.len);
+			for (sz i = 0; i < a.items.len; i++) {
+				EvalResult r = call_fn(args[1], { a.items[i] });
+				if (r.thrown) return r;
+				out[i] = r.value;
+			}
+			Array* res = new_array();
+			res.items = out;
+			return { .value = val_arr(res) };
+		}
+		case "filter":
+		{
+			if (!is_arr(args[0])) return { .thrown = true, .value = mk_str("type error: filter expects array") };
+			if (!is_closure(args[1]) && !is_prim(args[1])) return { .thrown = true, .value = mk_str("type error: filter expects function") };
+			Array* a = as_arr(args[0]);
+			Value[] tmp = mem::talloc_array(Value, a.items.len);
+			sz n = 0;
+			for (sz i = 0; i < a.items.len; i++) {
+				EvalResult r = call_fn(args[1], { a.items[i] });
+				if (r.thrown) return r;
+				if (truthy(r.value)) tmp[n++] = a.items[i];
+			}
+			Array* res = new_array();
+			res.items = tmp[:n];
+			return { .value = val_arr(res) };
+		}
+		case "mapi":
+		{
+			if (!is_arr(args[0])) return { .thrown = true, .value = mk_str("type error: mapi expects array") };
+			if (!is_closure(args[1]) && !is_prim(args[1])) return { .thrown = true, .value = mk_str("type error: mapi expects function") };
+			Array* a = as_arr(args[0]);
+			Value[] out = mem::talloc_array(Value, a.items.len);
+			for (sz i = 0; i < a.items.len; i++) {
+				EvalResult r = call_fn(args[1], { a.items[i], mk_num((double)i) });
+				if (r.thrown) return r;
+				out[i] = r.value;
+			}
+			Array* res = new_array();
+			res.items = out;
+			return { .value = val_arr(res) };
+		}
+		case "filteri":
+		{
+			if (!is_arr(args[0])) return { .thrown = true, .value = mk_str("type error: filteri expects array") };
+			if (!is_closure(args[1]) && !is_prim(args[1])) return { .thrown = true, .value = mk_str("type error: filteri expects function") };
+			Array* a = as_arr(args[0]);
+			Value[] tmp = mem::talloc_array(Value, a.items.len);
+			sz n = 0;
+			for (sz i = 0; i < a.items.len; i++) {
+				EvalResult r = call_fn(args[1], { a.items[i], mk_num((double)i) });
+				if (r.thrown) return r;
+				if (truthy(r.value)) tmp[n++] = a.items[i];
+			}
+			Array* res = new_array();
+			res.items = tmp[:n];
+			return { .value = val_arr(res) };
+		}
+		case "reduce":
+		{
+			if (!is_arr(args[0])) return { .thrown = true, .value = mk_str("type error: reduce expects array") };
+			if (!is_closure(args[2]) && !is_prim(args[2])) return { .thrown = true, .value = mk_str("type error: reduce expects function") };
+			Array* a = as_arr(args[0]);
+			Value acc = args[1];
+			for (sz i = 0; i < a.items.len; i++) {
+				EvalResult r = call_fn(args[2], { acc, a.items[i] });
+				if (r.thrown) return r;
+				acc = r.value;
+			}
+			return { .value = acc };
+		}
 		case "print":
 			foreach (arg : args) {
 				Value s = show(arg);
 				io::printn(*as_str(s));
 			}
 			return { .value = mk_nil() };
+		case "signal":
+		{
+			// signal(initial_value) => Signal value
+			Signal* sig = new_signal(args[0]);
+			return { .value = val_signal(sig) };
+		}
+		case "signal_get":
+		{
+			// signal_get(signal_or_derived) => current value
+			if (!is_signal(args[0])) {
+				return { .thrown = true, .value = mk_str("$: not a signal — did a local variable shadow the signal?") };
+			}
+			Signal* sig = as_signal(args[0]);
+			reactive_track(sig);
+			if (signal_is_derived(sig)) {
+				return { .value = derived_evaluate(sig) };
+			}
+			return { .value = sig.current };
+		}
+		case "signal_set":
+		{
+			// signal_set(signal, new_value) => nil
+			if (!is_signal(args[0])) {
+				return { .thrown = true, .value = mk_str("type error: signal_set expects signal") };
+			}
+			Signal* sig = as_signal(args[0]);
+			if (signal_is_derived(sig)) {
+				return { .thrown = true, .value = mk_str("type error: signal_set expects a plain signal, not a derived") };
+			}
+			sig.current = args[1];
+			notify_subs(sig.subs);
+			return { .value = mk_nil() };
+		}
+		case "derived":
+		{
+			// derived(fn) => derived signal (lazy computed)
+			if (!is_closure(args[0])) {
+				return { .thrown = true, .value = mk_str("type error: derived expects closure") };
+			}
+			Signal* d = new_derived(as_closure(args[0]));
+			return { .value = val_signal(d) };
+		}
+		case "effect":
+		{
+			// effect(fn) => unsubscribe closure
+			if (!is_closure(args[0])) {
+				return { .thrown = true, .value = mk_str("type error: effect expects closure") };
+			}
+			Effect* e = new_effect(as_closure(args[0]));
+			// Link into global effect list.
+			e.next = g_effects;
+			g_effects = e;
+			// Run the effect once with tracking.
+			effect_rerun(e);
+			// Return an unsubscribe closure that removes this effect.
+			// We use a prim-call: Call(Prim("__unsub"), [Lit(effect_as_value)])
+			// But we can't easily create a closure at runtime.  Instead, return
+			// the effect pointer as a Value so the user can pass it to __unsub.
+			// For simplicity, just return nil for now (effects live until program end).
+			return { .value = mk_nil() };
+		}
+		case "__element":
+		{
+			// __element(component_fn, props, child0, child1, ...) =>
+			//   calls component_fn(props, [children]) and caches the result by slot.
+			// On re-render, if the input fingerprint (XOR of all arg Values) is
+			// unchanged the cached result is returned without re-invoking the function.
+			if (args.len < 2) {
+				return { .thrown = true, .value = mk_str("type error: __element expects at least (fn, props)") };
+			}
+			int slot = g_element_slot;
+			g_element_slot++;
+			if (slot >= MAX_ELEMENT_SLOTS) {
+				return { .thrown = true, .value = mk_str("too many JSX elements (> MAX_ELEMENT_SLOTS)") };
+			}
+
+			// Compute fingerprint: XOR of all input Value bits.
+			ulong fp = 0;
+			for (sz i = 0; i < args.len; i++) fp ^= (ulong)args[i];
+			Value fingerprint = (Value)fp;
+
+			ElementSlot* sl = &g_element_slots[slot];
+			if (sl.used && sl.fingerprint == fingerprint) {
+				return { .value = sl.result };
+			}
+
+			// Call the component: component_fn(props) or component_fn(props, [children]).
+			Value fn_val = args[0];
+			Value props   = args[1];
+			int nkids = (int)args.len - 2;
+			Value call_result;
+			if (nkids == 0) {
+				EvalResult r = call_fn(fn_val, { props });
+				if (r.thrown) return r;
+				call_result = r.value;
+			} else {
+				Value[] kids = mem::new_array(Value, (sz)nkids);
+				for (int i = 0; i < nkids; i++) kids[i] = args[i + 2];
+				Array* kids_arr = new_array();
+				kids_arr.items = kids;
+				EvalResult r = call_fn(fn_val, { props, val_arr(kids_arr) });
+				if (r.thrown) return r;
+				call_result = r.value;
+			}
+
+			sl.used        = true;
+			sl.fingerprint = fingerprint;
+			sl.result      = call_result;
+			return { .value = call_result };
+		}
+		case "__begin_render":
+		{
+			// Reset the element cursor for a new render pass.
+			// The slot table is preserved so fingerprints can be compared.
+			g_element_slot = 0;
+			return { .value = mk_nil() };
+		}
+	}
+	// loadlib: dynamic plugin loading
+	if (name == "loadlib") {
+		return loadlib_fn(args);
 	}
 	// Check host function table (registered by embedder)
 	if (has_host_fn(name)) {
@@ -1286,7 +1985,11 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 				n.children = kids;
 				return n;
 			}
-		case CALL: return desugar_with_kids(CALL, e.children, tenv);
+		case CALL: {
+			AstNode* n = desugar_with_kids(CALL, e.children, tenv);
+			n.line = e.line;
+			return n;
+		}
 		case IF: return desugar_with_kids(IF, e.children, tenv);
 		case GET: return desugar_with_kids(GET, e.children, tenv);
 		case SET: return desugar_with_kids(SET, e.children, tenv);
@@ -1305,6 +2008,7 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 			}
 		case ARRAY_LIT: return desugar_with_kids(ARRAY_LIT, e.children, tenv);
 		case THROW: return desugar_with_kids(THROW, e.children, tenv);
+		case NULLCOAL: return desugar_with_kids(NULLCOAL, e.children, tenv);
 		case TRY:
 
 			{
@@ -1475,6 +2179,33 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 				}
 				return make_call(make_lambda({ s }, chain), { scrut });
 			}
+		case PMATCH:
+
+			{
+				// children = [scrut, pat0, body0, pat1, body1, ...]
+				// pat is LIT(val) for literal patterns or VAR(name) for var/wildcard patterns.
+				// VAR("_") = wildcard catch-all; VAR(name) = compare === name in env.
+				AstNode* scrut = desugar(e.children[0], tenv);
+				String s       = gensym("_scrut");
+				int npats      = ((int)e.children.len - 1) / 2;
+				AstNode* chain = make_throw(make_lit(mk_str("non-exhaustive match")));
+				for (int i = npats - 1; i >= 0; i--) {
+					AstNode* pat  = e.children[1 + 2 * i];
+					AstNode* body = desugar(e.children[1 + 2 * i + 1], tenv);
+					bool is_wild = (pat.type == VAR && pat.name == "_") ||
+					               (pat.type == LIT && is_str(pat.literal) && *as_str(pat.literal) == "_");
+					if (is_wild) {
+						chain = body;
+					} else {
+						AstNode* eq = make_call(
+							make_prim_node("==="),
+							{ make_var(s), pat }
+						);
+						chain = make_if(eq, body, chain);
+					}
+				}
+				return make_call(make_lambda({ s }, chain), { scrut });
+			}
 	}
 }
 
@@ -1502,6 +2233,14 @@ fn EvalResult apply_fn(Value fn_val, Value[] args) {
 		return { .is_tail = true, .tail_node = c.body, .tail_env = call_env };
 	}
 	return { .thrown = true, .value = mk_str("not callable") };
+}
+
+// call_fn: apply_fn + trampoline. Use this when calling DS closures from C3
+// primitives (map, filter, etc.) where tail-call thunks must be resolved.
+fn EvalResult call_fn(Value fn_val, Value[] args) {
+	EvalResult r = apply_fn(fn_val, args);
+	if (r.is_tail) return eval(r.tail_node, r.tail_env);
+	return r;
 }
 
 // ============================================================================
@@ -1553,14 +2292,23 @@ fn EvalResult eval_step(AstNode* node, Env* env) {
 			// Lazy Closure creation: if `v` was found in an inline closure
 			// env (CLOSURE_BIT), the binding has no Value — create a real
 			// Closure on the fly so the value can be passed around.
+			// Cache the result in the env frame so repeated lookups of the
+			// same binding return the same pointer (stable Value bits for
+			// fingerprint-based memoization in __element).
 			if (source != null && (source.count & CLOSURE_BIT)) {
 				AstNode* lambda = source.data.lambda_node;
 				Closure* c = new_closure();
-						rc_inc_env(source);
+				rc_inc_env(source);
 				c.param_ids = lambda.name_ids;
 				c.body = lambda.children[0];
 				c.env = source;
-				return { .value = val_closure(c) };
+				Value cv = val_closure(c);
+				// Promote: clear CLOSURE_BIT and store the closure Value directly.
+				// Future lookups take the count==1 branch and return cv without
+				// re-allocating a new Closure.
+				source.count &= ~CLOSURE_BIT;
+				source.data.value = cv;
+				return { .value = cv };
 			}
 			return { .value = v };
 		case LAMBDA:
@@ -1624,7 +2372,14 @@ fn EvalResult eval_step(AstNode* node, Env* env) {
 						if (is_str(av)) return { .value = val_num((double)(*as_str(av)).len) };
 					}
 				}
-				return prim_dispatch(pname, stack_buf[0:argc]);
+				EvalResult pr = prim_dispatch(pname, stack_buf[0:argc]);
+				if (pr.thrown && node.line > 0 && is_str(pr.value)) {
+					String msg = *as_str(pr.value);
+					if (msg.len < 5 || msg[0] != 'l' || msg[1] != 'i' || msg[2] != 'n' || msg[3] != 'e') {
+						pr.value = mk_str(string::tformat("line %d: %s", node.line, msg));
+					}
+				}
+				return pr;
 			}
 			// Fast path: direct VAR → Closure call — skip general eval/apply_fn.
 			if (node.children[0].type == VAR) {
@@ -1691,7 +2446,14 @@ fn EvalResult eval_step(AstNode* node, Env* env) {
 				if (a.thrown) return a;
 				args[i] = a.value;
 			}
-			return apply_fn(fn_r.value, args);
+			EvalResult r = apply_fn(fn_r.value, args);
+			if (r.thrown && node.line > 0 && is_str(r.value)) {
+				String msg = *as_str(r.value);
+				if (msg.len < 5 || msg[0] != 'l' || msg[1] != 'i' || msg[2] != 'n' || msg[3] != 'e') {
+					r.value = mk_str(string::tformat("line %d: %s", node.line, msg));
+				}
+			}
+			return r;
 		}
 		case IF:
 
@@ -1786,17 +2548,49 @@ fn EvalResult eval_step(AstNode* node, Env* env) {
 		case RECORD:
 
 		{
-			Record* r = new_record();
-			// Use pre-interned name_ids from the AST (no runtime intern() call).
-			r.keys = node.name_ids;
-			Value[] vals = mem::talloc_array(Value, node.children.len);
-			for (int i = 0; i < node.children.len; i++) {
+			sz n = node.children.len;
+			Value[] vals = mem::talloc_array(Value, n);
+			for (int i = 0; i < n; i++) {
 				EvalResult e = eval(node.children[i], env);
 				if (e.thrown) return e;
 				vals[i] = e.value;
 			}
-			r.values = vals;
-			return { .value = val_rec(r) };
+			// Intern literal records by content: same key IDs + same value bits
+			// → same Record* → stable fingerprint for __element slot cache.
+			// Only literal RECORD nodes are interned; record_spread and set results
+			// are intentionally excluded (they carry mutation semantics).
+			if (g_rec_intern == null) rec_intern_init();
+			// Build a lookup key: [keys bytes][vals bytes] as a flat byte string.
+			DString kbuf; kbuf.tinit();
+			for (sz i = 0; i < n; i++) {
+				uint kid = node.name_ids[i];
+				kbuf.append((String)((char*)&kid)[0:4]);  // uint = 4 bytes
+			}
+			for (sz i = 0; i < n; i++) {
+				Value vb = vals[i];
+				kbuf.append((String)((char*)&vb)[0:8]);  // Value (ulong) = 8 bytes
+			}
+			String lookup_key = kbuf.str_view();
+			if (try cached = g_rec_intern.get(lookup_key)) {
+				return { .value = cached };
+			}
+			// Miss: allocate a new record and insert into the intern table.
+			Record* r = alloc::new(INTERN_ALLOC, Record);
+			// High refcount: interned records are immortal — they must never be
+			// freed by rc_dec_val (which would call mem::free on a libc pointer).
+			r.refcount = 0x7FFFFFFF;
+			// Copy keys and values to INTERN_ALLOC so they survive past the
+			// eval scope (node.name_ids may be temp-allocated).
+			uint[] heap_keys = alloc::new_array(INTERN_ALLOC, uint, n);
+			for (sz i = 0; i < n; i++) heap_keys[i] = node.name_ids[i];
+			r.keys = heap_keys;
+			Value[] heap_vals = alloc::new_array(INTERN_ALLOC, Value, n);
+			for (sz i = 0; i < n; i++) heap_vals[i] = vals[i];
+			r.values = heap_vals;
+			Value rv = val_rec(r);
+			String heap_key = lookup_key.copy(INTERN_ALLOC);
+			g_rec_intern.set(heap_key, rv);
+			return { .value = rv };
 		}
 		case ARRAY_LIT:
 
@@ -1826,6 +2620,13 @@ fn EvalResult eval_step(AstNode* node, Env* env) {
 			Env* h = env_define(env, node.name_id, b.value);
 			return { .is_tail = true, .tail_node = node.children[1], .tail_env = h };
 		}
+		case NULLCOAL:
+
+		{
+			EvalResult b = eval(node.children[0], env);
+			if (!b.thrown && !is_nil(b.value)) return b;
+			return { .is_tail = true, .tail_node = node.children[1], .tail_env = env };
+		}
 		case PRIM:
 
 		{
@@ -1854,6 +2655,7 @@ fn EvalResult eval_step(AstNode* node, Env* env) {
 		case TYPEDEF:
 		case CONSTRUCT:
 		case MATCH:
+		case PMATCH:
 			return { .thrown = true, .value = mk_str("eval: surface node reached the kernel; desugar first") };
 	}
 }
@@ -1874,11 +2676,15 @@ Env* builtin_env;
 fn Env* make_builtin_env()
 {
 	String[] names = {
-		"+", "-", "*", "/",
+		"+", "-", "*", "/", "%",
 		"===", "<", ">", "<=", ">=",
 		"and", "or",
 		"is_number", "is_string", "is_bool", "is_array", "is_record", "is_nil",
-		"has_field", "len", "push", "print", "array_all", "slice",
+		"record_spread", "has_field", "len", "push", "print", "array_all", "slice",
+		"map", "filter", "reduce", "mapi", "filteri",
+		"signal", "signal_get", "signal_set", "derived", "effect",
+		"__element", "__begin_render",
+		"loadlib",
 	};
 	Env* e = mem::tnew(Env);
 	e.parent = null;
