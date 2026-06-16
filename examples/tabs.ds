@@ -1,0 +1,122 @@
+// tabs.ds — Tab navigation TUI app
+// Controls: ← → or h/l to switch tabs, q to quit
+
+// ── Key constants ──────────────────────────────────────────────────
+
+let k_left  = KEY_LEFT()
+let k_right = KEY_RIGHT()
+
+// ── Tab data ────────────────────────────────────────────────────────
+
+let tab_names = ["Home", "About", "Settings"]
+
+let tab_contents = [
+  "Welcome to milktea!\n\nA Bubble Tea-inspired TUI framework.\nUse ← → or h/l to switch tabs.",
+  "milktea  event loop and TTY management\nglaze    styling and layout\nboba     reusable widgets",
+  "Theme     Default\nBorder    Rounded\nColors    True color"
+]
+
+// ── App state ──────────────────────────────────────────────────────
+
+let initial_state = {
+  tab:    0,
+  width:  80,
+  height: 24,
+  quit:   false
+}
+
+// ── Pure update helpers ────────────────────────────────────────────
+
+let clamp = fn(v, lo, hi) {
+  if v < lo then lo
+  else if v > hi then hi
+  else v
+}
+
+// ── Model ──────────────────────────────────────────────────────────
+
+let init = fn() { initial_state }
+
+let update = fn(state, msg) {
+  match msg {
+    Key(k) ->
+      match k.code {
+        k_left ->
+          { ...state, tab: clamp(state.tab - 1, 0, len(tab_names) - 1) }
+        k_right ->
+          { ...state, tab: clamp(state.tab + 1, 0, len(tab_names) - 1) }
+        _ ->
+          match k.rune {
+            "h" -> { ...state, tab: clamp(state.tab - 1, 0, len(tab_names) - 1) }
+            "l" -> { ...state, tab: clamp(state.tab + 1, 0, len(tab_names) - 1) }
+            "q" -> { ...state, quit: true }
+            _   -> state
+          }
+      }
+    WindowSize(sz) -> { ...state, width: sz.width, height: sz.height }
+    Tick(_)        -> state
+    None(_)        -> state
+  }
+}
+
+// ── View ───────────────────────────────────────────────────────────
+
+let render_tab_item = fn(name, idx, active_tab) {
+  let active = idx === active_tab
+  let bg = if active then "#874bfc" else "none"
+  let fg = if active then "#ffffff" else "#626262"
+  let bold_attr = if active then true else false
+  let dim_attr = if active then false else true
+  let border_fg = if active then "#874bfc" else "#3c3c3c"
+
+  <Box
+    border="rounded"
+    border_fg=border_fg
+    bg=bg
+    fg=fg
+    bold=bold_attr
+    dim=dim_attr
+    padding_x=1
+    padding_y=0
+  >
+    <Text value=name />
+  </Box>
+}
+
+let view = fn(state) {
+  let tab_items = mapi(tab_names, fn(name, idx) {
+    render_tab_item(name, idx, state.tab)
+  })
+
+  let tab_bar = <HStack gap=0>
+    tab_items
+  </HStack>
+
+  let content = tab_contents[state.tab]
+
+  let content_box = <Box
+    border="rounded"
+    border_fg="#874bfc"
+    padding_x=2
+    padding_y=1
+    width=50
+    height=8
+  >
+    <Text value=content />
+  </Box>
+
+  let hint = "  ← → / h l  switch tabs    q  quit"
+
+  <VStack gap=1>
+    <Text value="" />,
+    tab_bar,
+    <Text value="" />,
+    content_box,
+    <Text value="" />,
+    <Text value=hint dim=true />
+  </VStack>
+}
+
+// ── Run ────────────────────────────────────────────────────────────
+
+run_model({ init: init, update: update, view: view })

@@ -1,0 +1,56 @@
+// counter.ds — Simple counter TUI app
+// Controls: ↑ to increment, ↓ to decrement, q to quit
+
+// ── Key constants ──────────────────────────────────────────────────
+
+let k_up   = KEY_UP()
+let k_down = KEY_DOWN()
+
+// ── App state ──────────────────────────────────────────────────────
+
+let initial_state = { value: 0, width: 80, height: 24 }
+
+// ── Helpers ────────────────────────────────────────────────────────
+
+let clamp_val = fn(v, lo, hi) {
+  if v < lo then lo else if v > hi then hi else v
+}
+
+// ── Model ──────────────────────────────────────────────────────────
+
+let init = fn() { initial_state }
+
+fn update(state, msg) {
+  match msg {
+    Key(k) ->
+      match k.code {
+        k_up   -> { ...state, value: state.value + 1 }
+        k_down -> { ...state, value: state.value - 1 }
+        _      ->
+          match k.rune {
+            "q" -> { ...state, quit: true }
+            _   -> state
+          }
+      }
+    WindowSize(sz) -> { ...state, width: sz.width, height: sz.height }
+    Tick(_)        -> state
+    None(_)        -> state
+  }
+}
+
+// ── View ───────────────────────────────────────────────────────────
+
+let view = fn(state) {
+  let label = "Counter: " + num_to_str(state.value)
+
+  <Box border="rounded" fg="#00d7ff" bold=true padding_x=3 padding_y=1>
+    <VStack gap=1>
+      <Text value=label bold=true />,
+      <Text value="Use ↑↓ to change, q to quit" dim=true />
+    </VStack>
+  </Box>
+}
+
+// ── Run ────────────────────────────────────────────────────────────
+
+run_model({ init: init, update: update, view: view })

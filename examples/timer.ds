@@ -1,0 +1,68 @@
+// timer.ds — countdown timer TUI app
+// Controls: space=pause/resume, r=reset, q=quit
+
+// ── State ────────────────────────────────────────────────────────
+
+let initial_state = { total: 60, remaining: 60, running: true, done: false }
+
+// ── Helpers ──────────────────────────────────────────────────────
+
+let format_time = fn(seconds) {
+  let mins = floor(seconds / 60)
+  let secs = floor(seconds % 60)
+  str_pad_left(num_to_str(mins), 2, "0") + ":" + str_pad_left(num_to_str(secs), 2, "0")
+}
+
+// ── Model ────────────────────────────────────────────────────────
+
+let init = fn() { initial_state }
+
+fn update(state, msg) {
+  match msg {
+    Key(k) ->
+      match k.rune {
+        " " -> if state.done then state
+               else { ...state, running: !state.running }
+        "r" -> { ...state, remaining: state.total, running: true, done: false }
+        "q" -> { ...state, quit: true }
+        _   -> state
+      }
+    Tick(_) ->
+      if state.running and state.done === false then {
+        let next = state.remaining - 1
+        if next <= 0
+          then { ...state, remaining: 0, done: true, running: false }
+          else { ...state, remaining: next }
+      } else state
+    WindowSize(sz) -> state
+    None(_)        -> state
+  }
+}
+
+// ── View ─────────────────────────────────────────────────────────
+
+let view = fn(state) {
+  let time_str = format_time(state.remaining)
+
+  let timer_box =
+    <Box border="rounded" fg="#ff00ff" bold=true padding_x=4 padding_y=2>
+      <Text value=time_str />
+    </Box>
+
+  let status =
+    if state.done then
+      <Text bold=true fg="#00ff88" value="Time's up!  ·  r to reset  ·  q to quit" />
+    else if state.running then
+      <Text dim=true value="SPACE to pause  ·  r reset  ·  q quit" />
+    else
+      <Text fg="#ffff00" value="PAUSED  ·  SPACE to resume  ·  r reset  ·  q quit" />
+
+  <VStack gap=2>
+    timer_box,
+    status
+  </VStack>
+}
+
+// ── Run ──────────────────────────────────────────────────────────
+
+run_model({ init: init, update: update, view: view })

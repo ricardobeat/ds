@@ -1,0 +1,77 @@
+// progress.ds — three animated progress bars
+// Controls: f=fast, s=slow, r=restart, q=quit
+
+// ── State ────────────────────────────────────────────────────────
+
+let init = fn() { { pct: 0, speed: 1, done: false } }
+
+// ── Helpers ──────────────────────────────────────────────────────
+
+let bar = fn(pct, fill, empty, color) {
+  progress_bar({ width: 38, pct: pct, fill: fill, empty: empty, fill_color: color, empty_color: "" })
+}
+
+// ── Model ────────────────────────────────────────────────────────
+
+fn update(state, msg) {
+  match msg {
+    Key(k) ->
+      match k.rune {
+        "f" -> { ...state, speed: 5 }
+        "s" -> { ...state, speed: 1 }
+        "r" -> { ...state, pct: 0, done: false, speed: 1 }
+        "q" -> { ...state, quit: true }
+        _   -> state
+      }
+    Tick(_) ->
+      if state.done then state
+      else {
+        let new_pct = state.pct + state.speed
+        if new_pct >= 100
+          then { ...state, pct: 100, done: true }
+          else { ...state, pct: new_pct }
+      }
+    WindowSize(sz) -> state
+    None(_)        -> state
+  }
+}
+
+// ── View ─────────────────────────────────────────────────────────
+
+let view = fn(state) {
+  let pct = state.pct
+  let pct_str = num_to_str(pct) + "%"
+
+  let body =
+    if state.done then
+      <VStack gap=1>
+        <Text bold=true fg="#00ff88" value="✓ Complete!" />,
+        <Text dim=true value="r to restart  ·  q to quit" />
+      </VStack>
+    else
+      <VStack gap=1>
+        <HStack gap=1>
+          <Text value=" Download " />,
+          <Text value=bar(pct, "█", "░", "#00d7ff") />
+        </HStack>,
+        <HStack gap=1>
+          <Text value=" Compile  " />,
+          <Text value=bar(pct, "■", "□", "#ff00ff") />
+        </HStack>,
+        <HStack gap=1>
+          <Text value=" Deploy   " />,
+          <Text value=bar(pct, "=", "-", "#00ff88") />
+        </HStack>,
+        <Text value="" />,
+        <Text bold=true value=pct_str />,
+        <Text dim=true value="f fast  ·  s slow  ·  r restart  ·  q quit" />
+      </VStack>
+
+  <Box border="rounded" pt=1 pb=1 pl=2 pr=2>
+    body
+  </Box>
+}
+
+// ── Run ──────────────────────────────────────────────────────────
+
+run_model({ init: init, update: update, view: view })

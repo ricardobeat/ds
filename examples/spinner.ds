@@ -1,0 +1,40 @@
+// spinner.ds — animated braille spinner TUI app
+
+// ── Spinner frames ────────────────────────────────────────────────
+
+let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+// ── App state ─────────────────────────────────────────────────────
+
+let init = fn() { { frame: 0 } }
+
+// ── Model ─────────────────────────────────────────────────────────
+
+fn update(state, msg) {
+  match msg {
+    Key(k) ->
+      match k.rune {
+        "q" -> { ...state, quit: true }
+        _   -> state
+      }
+    Tick(_)        -> { ...state, frame: (state.frame + 1) % len(frames) }
+    WindowSize(sz) -> state
+    None(_)        -> state
+  }
+}
+
+// ── View ──────────────────────────────────────────────────────────
+
+let view = fn(state) {
+  let spin = frames[state.frame]
+  let title = spin + "  Loading..."
+
+  <VStack gap=1>
+    <Text bold=true fg="#00d7ff" value=title />,
+    <Text dim=true value="Press q to quit" />
+  </VStack>
+}
+
+// ── Run ──────────────────────────────────────────────────────────
+
+run_model({ init: init, update: update, view: view })

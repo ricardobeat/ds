@@ -1,0 +1,85 @@
+// repl.ds — Interactive line-entry app (inputbox-style)
+// Type characters, Enter submits, Backspace deletes, q (empty) quits
+
+// ── Key constants ──────────────────────────────────────────────────
+
+let k_enter     = KEY_ENTER()
+let k_backspace = KEY_BACKSPACE()
+let k_rune      = KEY_RUNE()
+
+// ── State ─────────────────────────────────────────────────────────
+
+let init = fn() {
+  {
+    input:   "",
+    history: ["Welcome to DS REPL.", "Type something and press Enter.", "q (when empty) to quit."],
+    width:   80,
+    height:  24
+  }
+}
+
+// ── Model ─────────────────────────────────────────────────────────
+
+fn update(state, msg) {
+  match msg {
+    Key(k) ->
+      match k.code {
+        k_enter ->
+          if string_width(state.input) > 0 then {
+            let h = push(state.history, "> " + state.input)
+            { ...state, input: "", history: h }
+          } else state
+
+        k_backspace -> {
+          let l = string_width(state.input)
+          let new_input = if l > 0 then str_slice(state.input, 0, l - 1) else ""
+          { ...state, input: new_input }
+        }
+
+        k_rune ->
+          if string_width(state.input) === 0 and k.rune === "q"
+            then { ...state, quit: true }
+            else { ...state, input: state.input + k.rune }
+
+        _ -> state
+      }
+    WindowSize(sz) -> { ...state, width: sz.width, height: sz.height }
+    Tick(_)        -> state
+    None(_)        -> state
+  }
+}
+
+// ── View ──────────────────────────────────────────────────────────
+
+let render_line = fn(text, _selected) { text }
+
+let view = fn(state) {
+  let header =
+    <VStack gap=0>
+      <Text bold=true fg="#00ffcc" value="  DS REPL" />,
+      <Divider width=state.width />
+    </VStack>
+
+  let no_cursor = 0 - 1
+  let history_view =
+    <List items=state.history cursor=no_cursor render_item=render_line />
+
+  let input_area =
+    <Box border="rounded" fg="#ffff00" padding_x=1>
+      <TextInput prefix="> " value=state.input focused=true />
+    </Box>
+
+  let hint =
+    <Text dim=true value="  Enter to submit  ·  q (empty input) to quit" />
+
+  <VStack gap=1>
+    header,
+    history_view,
+    input_area,
+    hint
+  </VStack>
+}
+
+// ── Run ──────────────────────────────────────────────────────────
+
+run_model({ init: init, update: update, view: view })

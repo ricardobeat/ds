@@ -27,6 +27,41 @@ bench: build
 todo:
     c3c build todo && ./build/todo
 
+# Build the todo host binary (needed for all DS examples below)
+build-todo:
+    c3c build todo
+
+# DS example apps — each requires `just build-todo` first
+counter: build-todo
+    ./build/todo examples/counter.ds
+
+spinner: build-todo
+    ./build/todo examples/spinner.ds
+
+progress: build-todo
+    ./build/todo examples/progress.ds
+
+tabs: build-todo
+    ./build/todo examples/tabs.ds
+
+timer: build-todo
+    ./build/todo examples/timer.ds
+
+repl: build-todo
+    ./build/todo examples/repl.ds
+
+snake: build-todo
+    ./build/todo examples/snake.ds
+
+# Run all DS examples in sequence (each must be quit with q)
+examples: build-todo
+    @echo "=== counter ===" && ./build/todo examples/counter.ds || true
+    @echo "=== spinner ===" && ./build/todo examples/spinner.ds || true
+    @echo "=== progress ===" && ./build/todo examples/progress.ds || true
+    @echo "=== tabs ===" && ./build/todo examples/tabs.ds || true
+    @echo "=== timer ===" && ./build/todo examples/timer.ds || true
+    @echo "=== repl ===" && ./build/todo examples/repl.ds || true
+
 # Build and run the raylib 3D demo
 raylib: build-raylib-plugin
     ./build/engine run examples/raylib_demo.ds

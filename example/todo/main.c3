@@ -61,11 +61,41 @@ fn glaze::Style node_style(Value node) @local {
 		Value border_fg = rec_get(node, "border_fg");
 		if (val_is_str(border_fg)) { s = s.border_fg(glaze::color_hex(val_str(border_fg))); }
 	}
-	Value px = rec_get(node, "padding_x");
-	Value py = rec_get(node, "padding_y");
-	int ipx = val_is_num(px) ? (int)val_num(px) : 0;
-	int ipy = val_is_num(py) ? (int)val_num(py) : 0;
-	if (ipx > 0 || ipy > 0) s = s.padding(ipy, ipx, ipy, ipx);
+	// Full padding: pt/pr/pb/pl override padding_x/padding_y
+	Value pt = rec_get(node, "pt"); Value pr = rec_get(node, "pr");
+	Value pb = rec_get(node, "pb"); Value pl = rec_get(node, "pl");
+	bool has_full_pad = val_is_num(pt) || val_is_num(pr) || val_is_num(pb) || val_is_num(pl);
+	if (has_full_pad) {
+		int ipt = val_is_num(pt) ? (int)val_num(pt) : 0;
+		int ipr = val_is_num(pr) ? (int)val_num(pr) : 0;
+		int ipb = val_is_num(pb) ? (int)val_num(pb) : 0;
+		int ipl = val_is_num(pl) ? (int)val_num(pl) : 0;
+		s = s.padding(ipt, ipr, ipb, ipl);
+	} else {
+		Value px = rec_get(node, "padding_x");
+		Value py = rec_get(node, "padding_y");
+		int ipx = val_is_num(px) ? (int)val_num(px) : 0;
+		int ipy = val_is_num(py) ? (int)val_num(py) : 0;
+		if (ipx > 0 || ipy > 0) s = s.padding(ipy, ipx, ipy, ipx);
+	}
+	// Alignment
+	Value align_h = rec_get(node, "align_h");
+	Value align_v = rec_get(node, "align_v");
+	if (val_is_str(align_h) || val_is_str(align_v)) {
+		glaze::Position h_pos = glaze::Position.LEFT;
+		glaze::Position v_pos = glaze::Position.TOP;
+		if (val_is_str(align_h)) {
+			String ah = val_str(align_h);
+			if (ah == "center") { h_pos = glaze::Position.CENTER; }
+			else if (ah == "right") { h_pos = glaze::Position.RIGHT; }
+		}
+		if (val_is_str(align_v)) {
+			String av = val_str(align_v);
+			if (av == "center") { v_pos = glaze::Position.CENTER; }
+			else if (av == "bottom") { v_pos = glaze::Position.BOTTOM; }
+		}
+		s = s.align(h_pos, v_pos);
+	}
 	return s;
 }
 
@@ -438,21 +468,41 @@ fn EvalResult ds_hstack(Value[] args) {
 	return { .value = node };
 }
 
-// box_(opts, child) → node  (opts: { border, fg, bg, padding_x, padding_y, width, height })
+// Box(opts, child) → node
+// opts: { border, border_fg, fg, bg, bold, padding_x, padding_y, pt, pr, pb, pl, width, height, align_h, align_v }
 fn EvalResult ds_box(Value[] args) {
 	Value opts  = args.len >= 1 && val_is_rec(args[0]) ? args[0] : nil_val();
-	Value child = args.len >= 2 ? args[1] : nil_val();
-	Value border    = val_is_rec(opts) ? rec_get(opts, "border")    : nil_val();
-	Value border_fg = val_is_rec(opts) ? rec_get(opts, "border_fg") : nil_val();
-	Value fg        = val_is_rec(opts) ? rec_get(opts, "fg")        : nil_val();
-	Value bg        = val_is_rec(opts) ? rec_get(opts, "bg")        : nil_val();
-	Value px        = val_is_rec(opts) ? rec_get(opts, "padding_x") : nil_val();
-	Value py        = val_is_rec(opts) ? rec_get(opts, "padding_y") : nil_val();
-	Value w         = val_is_rec(opts) ? rec_get(opts, "width")     : nil_val();
-	Value h         = val_is_rec(opts) ? rec_get(opts, "height")    : nil_val();
+	// args[1] is a DS array of children (from __element); take the first.
+	Value child = nil_val();
+	if (args.len >= 2) {
+		Value kids_v = args[1];
+		if (val_is_arr(kids_v) && arr_len(kids_v) > 0) {
+			child = arr_get(kids_v, 0);
+		} else {
+			child = kids_v;
+		}
+	}
+	bool has = val_is_rec(opts);
 	Value node = engine::engine_mk_record(
-		{ "__type", "child", "border", "border_fg", "fg", "bg", "padding_x", "padding_y", "width", "height" },
-		{ str_val("box"), child, border, border_fg, fg, bg, px, py, w, h });
+		{ "__type", "child", "border", "border_fg", "fg", "bg", "bold",
+		  "padding_x", "padding_y", "pt", "pr", "pb", "pl",
+		  "width", "height", "align_h", "align_v" },
+		{ str_val("box"), child,
+		  has ? rec_get(opts, "border")     : nil_val(),
+		  has ? rec_get(opts, "border_fg")  : nil_val(),
+		  has ? rec_get(opts, "fg")         : nil_val(),
+		  has ? rec_get(opts, "bg")         : nil_val(),
+		  has ? rec_get(opts, "bold")       : nil_val(),
+		  has ? rec_get(opts, "padding_x")  : nil_val(),
+		  has ? rec_get(opts, "padding_y")  : nil_val(),
+		  has ? rec_get(opts, "pt")         : nil_val(),
+		  has ? rec_get(opts, "pr")         : nil_val(),
+		  has ? rec_get(opts, "pb")         : nil_val(),
+		  has ? rec_get(opts, "pl")         : nil_val(),
+		  has ? rec_get(opts, "width")      : nil_val(),
+		  has ? rec_get(opts, "height")     : nil_val(),
+		  has ? rec_get(opts, "align_h")    : nil_val(),
+		  has ? rec_get(opts, "align_v")    : nil_val() });
 	return { .value = node };
 }
 
@@ -471,6 +521,116 @@ fn EvalResult ds_divider(Value[] args) {
 		{ "__type", "width", "char" },
 		{ str_val("divider"), w, ch });
 	return { .value = node };
+}
+
+// ── Math utilities ────────────────────────────────────────────────
+
+fn EvalResult ds_math_floor(Value[] args) {
+	if (args.len < 1 || !val_is_num(args[0])) return { .value = num_val(0) };
+	return { .value = num_val((double)(long)val_num(args[0])) };
+}
+fn EvalResult ds_math_ceil(Value[] args) {
+	if (args.len < 1 || !val_is_num(args[0])) return { .value = num_val(0) };
+	double d = val_num(args[0]);
+	long i = (long)d;
+	return { .value = num_val((double)(d > (double)i ? i + 1 : i)) };
+}
+fn EvalResult ds_math_round(Value[] args) {
+	if (args.len < 1 || !val_is_num(args[0])) return { .value = num_val(0) };
+	double d = val_num(args[0]);
+	long i = (long)(d + 0.5);
+	return { .value = num_val((double)i) };
+}
+fn EvalResult ds_math_abs(Value[] args) {
+	if (args.len < 1 || !val_is_num(args[0])) return { .value = num_val(0) };
+	double d = val_num(args[0]);
+	return { .value = num_val(d < 0 ? -d : d) };
+}
+fn EvalResult ds_math_max(Value[] args) {
+	if (args.len < 2) return { .value = num_val(0) };
+	double a = val_is_num(args[0]) ? val_num(args[0]) : 0;
+	double b = val_is_num(args[1]) ? val_num(args[1]) : 0;
+	return { .value = num_val(a > b ? a : b) };
+}
+fn EvalResult ds_math_min(Value[] args) {
+	if (args.len < 2) return { .value = num_val(0) };
+	double a = val_is_num(args[0]) ? val_num(args[0]) : 0;
+	double b = val_is_num(args[1]) ? val_num(args[1]) : 0;
+	return { .value = num_val(a < b ? a : b) };
+}
+
+// ── Progress bar ──────────────────────────────────────────────────
+
+// progress_bar(opts) → string
+// opts: { width, pct, fill, empty, fill_color, empty_color }
+// fill_color / empty_color: hex strings or nil
+fn EvalResult ds_progress_bar(Value[] args) {
+	if (args.len < 1 || !val_is_rec(args[0])) return { .value = str_val("[          ]") };
+	Value opts = args[0];
+	int width    = val_is_num(rec_get(opts, "width"))  ? (int)val_num(rec_get(opts, "width"))  : 20;
+	int pct      = val_is_num(rec_get(opts, "pct"))    ? (int)val_num(rec_get(opts, "pct"))    : 0;
+	String fill  = val_is_str(rec_get(opts, "fill"))   ? val_str(rec_get(opts, "fill"))   : "█";
+	String empty = val_is_str(rec_get(opts, "empty"))  ? val_str(rec_get(opts, "empty"))  : "░";
+	String fill_hex  = val_is_str(rec_get(opts, "fill_color"))  ? val_str(rec_get(opts, "fill_color"))  : "";
+	String empty_hex = val_is_str(rec_get(opts, "empty_color")) ? val_str(rec_get(opts, "empty_color")) : "";
+	glaze::Color fc = fill_hex.len  > 0 ? glaze::color_hex(fill_hex)  : glaze::color_none();
+	glaze::Color ec = empty_hex.len > 0 ? glaze::color_hex(empty_hex) : glaze::color_none();
+	String bar = glaze::progress_bar(width, pct, fill, empty, fc, ec).copy(mem);
+	return { .value = str_val(bar) };
+}
+
+// ── String utilities ──────────────────────────────────────────────
+
+// str_repeat(s, n) → string
+fn EvalResult ds_str_repeat(Value[] args) {
+	if (args.len < 2) return { .value = str_val("") };
+	String s = val_is_str(args[0]) ? val_str(args[0]) : "";
+	int n    = val_is_num(args[1]) ? (int)val_num(args[1]) : 0;
+	if (n <= 0 || s.len == 0) return { .value = str_val("") };
+	DString d = dstring::new(mem, s);
+	for (int i = 1; i < n; i++) d.append_string(s);
+	return { .value = str_val(d.str_view()) };
+}
+
+// num_to_str(n) → string  (integer formatting)
+fn EvalResult ds_num_to_str(Value[] args) {
+	if (args.len < 1 || !val_is_num(args[0])) return { .value = str_val("0") };
+	double d = val_num(args[0]);
+	long   i = (long)d;
+	if ((double)i == d) {
+		return { .value = str_val(string::tformat("%d", (int)i).copy(mem)) };
+	}
+	return { .value = str_val(string::tformat("%g", d).copy(mem)) };
+}
+
+// str_pad_left(s, width, pad_char) → string
+fn EvalResult ds_str_pad_left(Value[] args) {
+	if (args.len < 2) return { .value = str_val("") };
+	String s     = val_is_str(args[0]) ? val_str(args[0]) : "";
+	int width    = val_is_num(args[1]) ? (int)val_num(args[1]) : 0;
+	String pad_c = args.len >= 3 && val_is_str(args[2]) ? val_str(args[2]) : " ";
+	int cur = glaze::string_width(s);
+	if (cur >= width) return { .value = str_val(s) };
+	DString d = dstring::new(mem, s);
+	int deficit = width - cur;
+	for (int i = 0; i < deficit; i++) d.append_string(pad_c);
+	d.append_string(s);
+	return { .value = str_val(d.str_view()) };
+}
+
+// str_pad_right(s, width, pad_char) → string
+fn EvalResult ds_str_pad_right(Value[] args) {
+	if (args.len < 2) return { .value = str_val("") };
+	String s     = val_is_str(args[0]) ? val_str(args[0]) : "";
+	int width    = val_is_num(args[1]) ? (int)val_num(args[1]) : 0;
+	String pad_c = args.len >= 3 && val_is_str(args[2]) ? val_str(args[2]) : " ";
+	int cur = glaze::string_width(s);
+	if (cur >= width) return { .value = str_val(s) };
+	DString d = dstring::new(mem, s);
+	d.append_string(s);
+	int deficit = width - cur;
+	for (int i = 0; i < deficit; i++) d.append_string(pad_c);
+	return { .value = str_val(d.str_view()) };
 }
 
 // ── glaze layout helpers (kept for backwards compat / ad-hoc use) ─
@@ -520,11 +680,23 @@ fn EvalResult ds_style_render(Value[] args) {
 			Value border_fg = rec_get(opts, "border_fg");
 			if (val_is_str(border_fg)) { s = s.border_fg(glaze::color_hex(val_str(border_fg))); }
 		}
-		Value px = rec_get(opts, "padding_x");
-		Value py = rec_get(opts, "padding_y");
-		int ipx = val_is_num(px) ? (int)val_num(px) : 0;
-		int ipy = val_is_num(py) ? (int)val_num(py) : 0;
-		if (ipx > 0 || ipy > 0) s = s.padding(ipy, ipx, ipy, ipx);
+		// Full padding
+		Value pt2 = rec_get(opts, "pt"); Value pr2 = rec_get(opts, "pr");
+		Value pb2 = rec_get(opts, "pb"); Value pl2 = rec_get(opts, "pl");
+		bool full_pad = val_is_num(pt2) || val_is_num(pr2) || val_is_num(pb2) || val_is_num(pl2);
+		if (full_pad) {
+			s = s.padding(
+				val_is_num(pt2) ? (int)val_num(pt2) : 0,
+				val_is_num(pr2) ? (int)val_num(pr2) : 0,
+				val_is_num(pb2) ? (int)val_num(pb2) : 0,
+				val_is_num(pl2) ? (int)val_num(pl2) : 0);
+		} else {
+			Value px = rec_get(opts, "padding_x");
+			Value py = rec_get(opts, "padding_y");
+			int ipx = val_is_num(px) ? (int)val_num(px) : 0;
+			int ipy = val_is_num(py) ? (int)val_num(py) : 0;
+			if (ipx > 0 || ipy > 0) s = s.padding(ipy, ipx, ipy, ipx);
+		}
 		Value w = rec_get(opts, "width");
 		if (val_is_num(w)) s = s.width((int)val_num(w));
 		Value h = rec_get(opts, "height");
@@ -599,6 +771,23 @@ fn int main(String[] args) {
 	engine::engine_register("StatusBar",    &ds_status_bar);
 	engine::engine_register("TextInput",    &ds_text_input);
 	engine::engine_register("List",         &ds_list);
+
+	// Progress bar
+	engine::engine_register("progress_bar",    &ds_progress_bar);
+
+	// String utilities
+	engine::engine_register("str_repeat",      &ds_str_repeat);
+	engine::engine_register("num_to_str",      &ds_num_to_str);
+	engine::engine_register("str_pad_left",    &ds_str_pad_left);
+	engine::engine_register("str_pad_right",   &ds_str_pad_right);
+
+	// Math utilities
+	engine::engine_register("floor",           &ds_math_floor);
+	engine::engine_register("ceil",            &ds_math_ceil);
+	engine::engine_register("round",           &ds_math_round);
+	engine::engine_register("abs",             &ds_math_abs);
+	engine::engine_register("max",             &ds_math_max);
+	engine::engine_register("min",             &ds_math_min);
 
 	// Kept for ad-hoc use
 	engine::engine_register("join_vertical",   &ds_join_vertical);
