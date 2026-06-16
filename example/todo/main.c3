@@ -127,33 +127,43 @@ fn String render_node(Value node) @local {
 		int gap = val_is_num(rec_get(node, "gap")) ? (int)val_num(rec_get(node, "gap")) : 0;
 		int total_w = val_is_num(rec_get(node, "width")) ? (int)val_num(rec_get(node, "width")) : 0;
 
-		// Parse constraints: array of strings like "fill", "fill:2", "len:N", "min:N", "max:N".
+		// Parse constraints: space-separated string e.g. "fill len:1 min:4".
 		Value constraints_v = rec_get(node, "constraints");
-		bool has_constraints = val_is_arr(constraints_v) && arr_len(constraints_v) == n;
+		bool has_constraints = val_is_str(constraints_v) && total_w > 0;
 
 		String[] parts = mem::talloc_array(String, (sz)n);
-		if (has_constraints && total_w > 0) {
+		if (has_constraints) {
+			// Split constraint string on spaces into per-child tokens.
+			String ctxt = val_str(constraints_v);
+			String[64] tokens;
+			int ntok = 0;
+			sz tok_start = 0;
+			for (sz k = 0; k <= ctxt.len && ntok < 64; k++) {
+				if (k == ctxt.len || ctxt[k] == ' ') {
+					if (k > tok_start) tokens[ntok++] = ctxt[tok_start:k - tok_start];
+					tok_start = k + 1;
+				}
+			}
 			xray::Constraint[] cs = mem::talloc_array(xray::Constraint, (sz)n);
 			for (int i = 0; i < n; i++) {
-				Value cv = arr_get(constraints_v, i);
-				String s = val_is_str(cv) ? val_str(cv) : "fill";
+				String s = i < ntok ? tokens[i] : "fill";
 				int col = -1;
-					foreach (j, c : s) { if (c == ':') { col = (int)j; break; } }
-					String kind = col >= 0 ? s[0:(sz)col] : s;
-					int arg = 1;
-					if (col >= 0) {
-						String tail = s[(sz)(col + 1):(sz)(s.len - (sz)col - 1)];
-						if (try v = tail.to_int()) arg = (int)v;
-					}
-					if (kind == "len") {
-						cs[i] = xray::constraint_len(arg);
-					} else if (kind == "min") {
-						cs[i] = xray::constraint_min(arg);
-					} else if (kind == "max") {
-						cs[i] = xray::constraint_max(arg);
-					} else {
-						cs[i] = xray::constraint_fill(arg);
-					}
+				foreach (j, c : s) { if (c == ':') { col = (int)j; break; } }
+				String kind = col >= 0 ? s[0:(sz)col] : s;
+				int arg = 1;
+				if (col >= 0) {
+					String tail = s[(sz)(col + 1):(sz)(s.len - (sz)col - 1)];
+					if (try v = tail.to_int()) arg = (int)v;
+				}
+				if (kind == "len") {
+					cs[i] = xray::constraint_len(arg);
+				} else if (kind == "min") {
+					cs[i] = xray::constraint_min(arg);
+				} else if (kind == "max") {
+					cs[i] = xray::constraint_max(arg);
+				} else {
+					cs[i] = xray::constraint_fill(arg);
+				}
 			}
 			xray::Rect[64] rects;
 			xray::Rect area = xray::new_rect(0, 0, total_w, 1);

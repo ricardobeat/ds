@@ -133,7 +133,7 @@ let view = fn(state) {
     <VStack gap=1>
       <Text bold=true value="  New todo" />,
       <TextInput prefix="  > " value=state.input focused=true />,
-      <HStack gap=0 width=state.width constraints=["fill", "len:1"]>
+      <HStack gap=0 width=state.width constraints="fill len:1">
         <StatusBar text="  Enter to add  ·  ESC to cancel" />,
         <Star char=star />
       </HStack>
@@ -142,7 +142,7 @@ let view = fn(state) {
   let list_view =
     <VStack gap=1>
       <List items=state.todos cursor=state.cursor render_item=render_todo />,
-      <HStack gap=0 width=state.width constraints=["fill", "len:1"]>
+      <HStack gap=0 width=state.width constraints="fill len:1">
         <StatusBar text="  ↑↓ move  ·  space toggle  ·  a add  ·  d delete  ·  q quit" />,
         <Star char=star />
       </HStack>
