@@ -172,7 +172,7 @@ fn milktea::Cmd DsModel.init(DsModel* self) @dynamic {
 	} else {
 		g_state = r.value;
 	}
-	return null;
+	return milktea::every(200);
 }
 
 fn milktea::Cmd DsModel.update(DsModel* self, milktea::Msg msg) @dynamic {
