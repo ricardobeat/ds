@@ -480,6 +480,31 @@ fn Value mk_str(String s) {
 	return val_str(p);
 }
 
+// String intern table: content → stable heap-allocated Value.
+// Same string content always returns the same Value bits, enabling
+// fingerprint cache hits in __element without deep equality checks.
+HashMap{String, Value}* g_str_intern;
+
+fn void str_intern_init() {
+	g_str_intern = mem::new(HashMap{String, Value});
+	g_str_intern.init(mem, 128);
+}
+
+// mk_str_intern: intern a string literal. Returns a stable Value whose
+// pointer bits are identical for identical string content. Only call this
+// for immutable string literals, not for dynamically constructed strings
+// (concat results, error messages) — those would fill the table unboundedly.
+fn Value mk_str_intern(String s) {
+	if (g_str_intern == null) str_intern_init();
+	if (try v = g_str_intern.get(s)) return v;
+	String* p = mem::new(String);   // heap, not temp — stable across frames
+	*p = s.copy(mem);               // copy content into heap storage
+	Value v = val_str(p);
+	g_str_intern.set(*p, v);        // key is the heap copy; content-equal lookups will hit
+	return v;
+}
+
+
 // mk_prim: the prim carries a name; we now put the `Prim` struct on the
 // heap so the 8-byte Value can point at it.
 fn Value mk_prim(String n) {
@@ -2246,14 +2271,23 @@ fn EvalResult eval_step(AstNode* node, Env* env) {
 			// Lazy Closure creation: if `v` was found in an inline closure
 			// env (CLOSURE_BIT), the binding has no Value — create a real
 			// Closure on the fly so the value can be passed around.
+			// Cache the result in the env frame so repeated lookups of the
+			// same binding return the same pointer (stable Value bits for
+			// fingerprint-based memoization in __element).
 			if (source != null && (source.count & CLOSURE_BIT)) {
 				AstNode* lambda = source.data.lambda_node;
 				Closure* c = new_closure();
-						rc_inc_env(source);
+				rc_inc_env(source);
 				c.param_ids = lambda.name_ids;
 				c.body = lambda.children[0];
 				c.env = source;
-				return { .value = val_closure(c) };
+				Value cv = val_closure(c);
+				// Promote: clear CLOSURE_BIT and store the closure Value directly.
+				// Future lookups take the count==1 branch and return cv without
+				// re-allocating a new Closure.
+				source.count &= ~CLOSURE_BIT;
+				source.data.value = cv;
+				return { .value = cv };
 			}
 			return { .value = v };
 		case LAMBDA:

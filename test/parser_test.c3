@@ -356,3 +356,15 @@ fn void test_from_import_with_sugar() @test
 	Value v = run_parsed("from signals import { get }; let $score = 5; $score = 15; get(score)");
 	assert(as_num(v) == 15.0);
 }
+
+fn void test_string_interning() @test
+{
+	// Same string literal evaluated twice must produce the same Value bits.
+	Value v1 = run_parsed("\"hello\"");
+	Value v2 = run_parsed("\"hello\"");
+	Value v3 = run_parsed("\"world\"");
+	assert(is_str(v1));
+	assert(is_str(v2));
+	assert(v1 == v2, "interned string values must be identical");
+	assert(v1 != v3, "different strings must differ");
+}

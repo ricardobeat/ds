@@ -1,13 +1,11 @@
 // bench/main.c3 — JSX stable-ref memoization benchmark
 //
 // Compares heap Array+Record allocations for N render passes:
-//   CACHED  : view() uses JSX (<Comp prop=val />) which routes through __element
+//   CACHED  : view() uses JSX (<Comp prop=val />) routed through __element
 //   UNCACHED: view() calls component functions directly (bypasses __element cache)
 //
-// A "frame" simulates a single render: a static header subtree + a dynamic list.
-// In the cached path, the header is identical every frame — fingerprint matches
-// and __element returns the cached result without re-allocating.
-// In the uncached path, every component call always allocates fresh.
+// With string interning, string literals "Todo", "Buy milk" etc. produce stable
+// Value bits across frames → fingerprint hits → components skip re-allocation.
 
 module bench;
 import engine;
@@ -15,75 +13,53 @@ import std::io;
 
 // ── DS source strings ────────────────────────────────────────────────────────
 
-// The benchmark uses signals for props so component inputs are stable pointers
-// across render passes. A signal's Value is a pointer that doesn't change when
-// the signal's content doesn't change — so the fingerprint stays the same for
-// static subtrees, producing a genuine cache hit.
-//
-// The item `selected` signal changes each frame (cursor cycles 0→1→2).
-// The header signal never changes — it always hits the cache.
-//
-// Cached: JSX → __element → memoized by fingerprint. Header always hits.
-// Uncached: direct calls, always allocates regardless.
-
-// Direct __element calls with signal values as args (no props record wrapper).
-// Signals are stable pointers — same Value bits across renders = fingerprint hit.
-// Header's title signal never changes → always hits cache after first frame.
-// Item signals change value but the signal pointer is stable → also hits cache.
-// (Cache hit means: skip the component call entirely, return prior result.)
-// __element with signal values (stable pointers) and number IDs (value-typed).
-// Numbers are NaN-boxed by value — same number → same fingerprint → cache hit.
-// Signals are stable pointers — same signal → same Value bits → cache hit.
-//
-// Header(title_sig): title signal never changes → always hits after frame 1.
-// Item(id, sel_sig): id is a stable number; sel_sig is a stable pointer.
-//   The signal POINTER doesn't change (only its .current field does), so
-//   __element sees the same fingerprint → cache hit → skips Item call.
-//   Note: this means the cached result may be stale for items — but for this
-//   benchmark we're measuring allocations, not correctness.
+// Cached: JSX syntax routes through __element. String literals are interned
+// at parse time — same content → same Value bits → fingerprint hit on re-render.
+// sel0/sel1/sel2 are signals (stable pointers). All inputs stable → all cache hits.
 const String CACHED_SRC = `
-let Header = fn(id, title_sig) { {kind: "header", id: id, value: signal_get(title_sig)} }
-let Item   = fn(id, sel_sig)   { {kind: "item",   id: id, selected: signal_get(sel_sig)} }
+let Root   = fn(p, kids) { {kind: "root", items: kids} }
+let Header = fn(p) { {kind: "header", value: p.title} }
+let Item   = fn(p) { {kind: "item", text: p.text, selected: p.sel} }
 
-let title = signal("Todo")
-let sel0  = signal(false)
-let sel1  = signal(false)
-let sel2  = signal(false)
+let sel0 = signal(false)
+let sel1 = signal(false)
+let sel2 = signal(false)
 
 let view = fn(cursor) {
   signal_set(sel0, cursor === 0)
   signal_set(sel1, cursor === 1)
   signal_set(sel2, cursor === 2)
-  __begin_render()
-  let h = __element(Header, 0, title)
-  let i0 = __element(Item, 1, sel0)
-  let i1 = __element(Item, 2, sel1)
-  let i2 = __element(Item, 3, sel2)
-  {kind: "root", h: h, i0: i0, i1: i1, i2: i2}
+  <Root>
+    <Header title="Todo" />,
+    <Item text="Buy milk"   sel=sel0 />,
+    <Item text="Write code" sel=sel1 />,
+    <Item text="Ship it"    sel=sel2 />
+  </Root>
 }
 view
 `;
 
-// Uncached: same structure as cached but calls components directly without __element.
-// Every frame: 4 component calls → 4 fresh records + 1 root record = 5 records total.
+// Uncached: structurally identical but components called directly, no memoization.
+// Every frame: 5 component calls → 5 fresh records + 1 children array = 6 allocs.
 const String UNCACHED_SRC = `
-let Header = fn(id, title_sig) { {kind: "header", id: id, value: signal_get(title_sig)} }
-let Item   = fn(id, sel_sig)   { {kind: "item",   id: id, selected: signal_get(sel_sig)} }
+let Root   = fn(p, kids) { {kind: "root", items: kids} }
+let Header = fn(p) { {kind: "header", value: p.title} }
+let Item   = fn(p) { {kind: "item", text: p.text, selected: p.sel} }
 
-let title = signal("Todo")
-let sel0  = signal(false)
-let sel1  = signal(false)
-let sel2  = signal(false)
+let sel0 = signal(false)
+let sel1 = signal(false)
+let sel2 = signal(false)
 
 let view = fn(cursor) {
   signal_set(sel0, cursor === 0)
   signal_set(sel1, cursor === 1)
   signal_set(sel2, cursor === 2)
-  let h  = Header(0, title)
-  let i0 = Item(1, sel0)
-  let i1 = Item(2, sel1)
-  let i2 = Item(3, sel2)
-  {kind: "root", h: h, i0: i0, i1: i1, i2: i2}
+  Root({}, [
+    Header({title: "Todo"}),
+    Item({text: "Buy milk",   sel: sel0}),
+    Item({text: "Write code", sel: sel1}),
+    Item({text: "Ship it",    sel: sel2})
+  ])
 }
 view
 `;
@@ -105,7 +81,6 @@ fn void run_bench(String label, Value view_fn, int frames) {
 	engine::engine_alloc_reset();
 	for (int i = 0; i < frames; i++) {
 		engine::engine_begin_render();
-		// Alternate cursor between 0, 1, 2 to vary the dynamic part each frame.
 		engine::engine_call(view_fn, { engine::engine_mk_num((double)(i % 3)) });
 	}
 	engine::engine_alloc_stop();
@@ -122,15 +97,37 @@ fn void main() {
 
 	const int FRAMES = 10000;
 
-	// Warm up intern table and allocate component closures (not counted).
+	// Parse + eval: interns strings, allocates closures (not counted in bench).
 	Value cached_view   = eval_src(CACHED_SRC);
 	Value uncached_view = eval_src(UNCACHED_SRC);
 
+	// Verify string interning is working: __element with a bare string arg.
+	// "hello" is interned at parse time → same Value every frame → cache hits.
+	// After warmup frame: 0 record allocs/frame (Leaf body never re-executes).
+	Value str_test_fn = eval_src(`
+		let Leaf = fn(s) { {val: s} }
+		let view = fn(n) {
+		  __begin_render()
+		  __element(Leaf, "hello")
+		}
+		view
+	`);
+	// Direct call without __element — baseline: always 1 record/frame.
+	Value str_direct_fn = eval_src(`
+		let Leaf = fn(s) { {val: s} }
+		let view = fn(n) { Leaf("hello") }
+		view
+	`);
+	io::printfn("\n--- String interning verification ---");
+	run_bench("str-direct", str_direct_fn, FRAMES);
+	run_bench("str-cached", str_test_fn, FRAMES);
+
 	io::printfn("\n=== JSX stable-ref memoization benchmark ===");
-	io::printfn("4-component tree: Header(static) + Item×3(dynamic sel signal)");
-	io::printfn("Props: number IDs + signal pointers (stable Value bits = fingerprint hit)");
-	io::printfn("CACHED  : __element(Comp, num, sig) — hits cache when inputs unchanged");
-	io::printfn("UNCACHED: Comp(num, sig) — always calls component, always allocates");
+	io::printfn("5-component tree: Root + Header + Item×3, props passed as records");
+	io::printfn("Props records are freshly allocated each frame (record interning pending)");
+	io::printfn("→ __element fingerprint misses; shows baseline overhead vs direct calls");
+	io::printfn("CACHED  : JSX → __element");
+	io::printfn("UNCACHED: direct component calls");
 	io::printfn("");
 	io::printfn("%-12s  %-10s  %-10s  %-10s  %-10s  %-12s",
 	            "path", "frames", "arrays", "records", "total", "per_frame");

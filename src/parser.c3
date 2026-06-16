@@ -705,7 +705,7 @@ fn AstNode* parse_element(Parser* p)
 		AstNode* v;
 		if (parser_check(p, TK_STR))
 		{
-			v = make_lit(mk_str(parser_cur(p).text));
+			v = make_lit(mk_str_intern(parser_cur(p).text));
 			parser_advance(p);
 		}
 		else if (parser_check(p, TK_NUM))
@@ -855,7 +855,7 @@ fn AstNode* parse_postfix(Parser* p)
 			}
 			String fname = parser_cur(p).text;
 			parser_advance(p);
-			e = make_get(e, make_lit(mk_str(fname)));
+			e = make_get(e, make_lit(mk_str_intern(fname)));
 		}
 		else if (parser_check(p, TK_LPAREN))
 		{
@@ -1217,7 +1217,7 @@ fn AstNode* parse_primary(Parser* p)
 			return lined(make_lit(mk_num(t.num_val)), ln);
 		case TK_STR:
 			parser_advance(p);
-			return lined(make_lit(mk_str(t.text)), ln);
+			return lined(make_lit(mk_str_intern(t.text)), ln);
 		case TK_KW_TRUE:
 			parser_advance(p);
 			return lined(make_lit(mk_bool(true)), ln);
