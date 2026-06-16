@@ -123,12 +123,50 @@ fn String render_node(Value node) @local {
 		Value children = rec_get(node, "children");
 		if (!val_is_arr(children)) return "";
 		int n = arr_len(children);
-		int gap = val_is_num(rec_get(node, "gap")) ? (int)val_num(rec_get(node, "gap")) : 0;
-		String[] parts = mem::talloc_array(String, (sz)n);
-		for (int i = 0; i < n; i++) {
-			parts[i] = render_node(arr_get(children, i));
-		}
 		if (n == 0) return "";
+		int gap = val_is_num(rec_get(node, "gap")) ? (int)val_num(rec_get(node, "gap")) : 0;
+		int total_w = val_is_num(rec_get(node, "width")) ? (int)val_num(rec_get(node, "width")) : 0;
+
+		// Parse constraints: array of strings like "fill", "fill:2", "len:N", "min:N", "max:N".
+		Value constraints_v = rec_get(node, "constraints");
+		bool has_constraints = val_is_arr(constraints_v) && arr_len(constraints_v) == n;
+
+		String[] parts = mem::talloc_array(String, (sz)n);
+		if (has_constraints && total_w > 0) {
+			xray::Constraint[] cs = mem::talloc_array(xray::Constraint, (sz)n);
+			for (int i = 0; i < n; i++) {
+				Value cv = arr_get(constraints_v, i);
+				String s = val_is_str(cv) ? val_str(cv) : "fill";
+				int col = -1;
+					foreach (j, c : s) { if (c == ':') { col = (int)j; break; } }
+					String kind = col >= 0 ? s[0:(sz)col] : s;
+					int arg = 1;
+					if (col >= 0) {
+						String tail = s[(sz)(col + 1):(sz)(s.len - (sz)col - 1)];
+						if (try v = tail.to_int()) arg = (int)v;
+					}
+					if (kind == "len") {
+						cs[i] = xray::constraint_len(arg);
+					} else if (kind == "min") {
+						cs[i] = xray::constraint_min(arg);
+					} else if (kind == "max") {
+						cs[i] = xray::constraint_max(arg);
+					} else {
+						cs[i] = xray::constraint_fill(arg);
+					}
+			}
+			xray::Rect[64] rects;
+			xray::Rect area = xray::new_rect(0, 0, total_w, 1);
+			int nc = xray::layout_h_gap(area, cs[:n], gap, rects[:n]);
+			for (int i = 0; i < nc; i++) {
+				String raw = render_node(arr_get(children, i));
+				parts[i] = glaze::style().width(rects[i].w).render(raw).copy(mem);
+			}
+		} else {
+			for (int i = 0; i < n; i++) {
+				parts[i] = render_node(arr_get(children, i));
+			}
+		}
 		return glaze::join_horizontal_arr(glaze::Position.TOP, parts[:n], gap).copy(mem);
 	}
 
@@ -374,21 +412,28 @@ fn EvalResult ds_vstack(Value[] args) {
 }
 
 // hstack(props, children) → node
+// props: { gap, width, constraints: ["fill", "len:N", ...] }
 fn EvalResult ds_hstack(Value[] args) {
 	Value props = args.len >= 1 ? args[0] : nil_val();
 	Value children = args.len >= 2 ? args[1] : nil_val();
-	Value gap;
+	Value gap, width, constraints;
 	if (val_is_num(props)) {
 		gap = props;
+		width = nil_val();
+		constraints = nil_val();
 	} else if (val_is_rec(props)) {
 		gap = rec_get(props, "gap");
-		if (val_is_nil(gap)) { gap = num_val(1); }
+		if (val_is_nil(gap)) { gap = num_val(0); }
+		width = rec_get(props, "width");
+		constraints = rec_get(props, "constraints");
 	} else {
 		gap = num_val(0);
+		width = nil_val();
+		constraints = nil_val();
 	}
 	Value node = engine::engine_mk_record(
-		{ "__type", "gap", "children" },
-		{ str_val("hstack"), gap, children });
+		{ "__type", "gap", "width", "constraints", "children" },
+		{ str_val("hstack"), gap, width, constraints, children });
 	return { .value = node };
 }
 
