@@ -210,7 +210,7 @@ fn milktea::Cmd DsModel.init(DsModel* self) @dynamic {
 	} else {
 		g_state = r.value;
 	}
-	return milktea::every(200);
+	return milktea::tick(80);
 }
 
 fn milktea::Cmd DsModel.update(DsModel* self, milktea::Msg msg) @dynamic {
@@ -253,6 +253,7 @@ fn milktea::Cmd DsModel.update(DsModel* self, milktea::Msg msg) @dynamic {
 			return milktea::quit();
 		}
 	}
+	if (msg.kind == milktea::MsgKind.TICK) return milktea::tick(80);
 	return null;
 }
 
