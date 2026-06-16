@@ -251,12 +251,17 @@ struct InternTable {
 
 InternTable g_intern;
 
+// Stable heap allocator for global intern tables. Using the libc allocator
+// directly bypasses the per-test tracking allocator so that intern entries
+// are not reported as "leaks" by the test framework.
+const Allocator INTERN_ALLOC = &allocators::LIBC_ALLOCATOR;
+
 fn void intern_init() {
-	g_intern.fwd = mem::new(HashMap{String, uint});
-	g_intern.fwd.init(mem, 64);
+	g_intern.fwd = alloc::new(INTERN_ALLOC, HashMap{String, uint});
+	g_intern.fwd.init(INTERN_ALLOC, 64);
 	g_intern.count = 0;
 	g_intern.cap = 32;
-	g_intern.rev = mem::new_array(String, g_intern.cap);
+	g_intern.rev = alloc::new_array(INTERN_ALLOC, String, g_intern.cap);
 }
 
 // Look up (or allocate) an atom ID for `s`.  The string is copied into
@@ -268,10 +273,10 @@ fn uint intern(String s) {
 	if (try id = g_intern.fwd.get(s)) return id;
 	if (g_intern.count >= g_intern.cap) {
 		uint new_cap = g_intern.cap * 2;
-		g_intern.rev = alloc::realloc_array(mem, g_intern.rev, String, new_cap);
+		g_intern.rev = alloc::realloc_array(INTERN_ALLOC, g_intern.rev, String, new_cap);
 		g_intern.cap = new_cap;
 	}
-	String heap_s = s.copy(mem);
+	String heap_s = s.copy(INTERN_ALLOC);
 	g_intern.count++;
 	g_intern.rev[g_intern.count - 1] = heap_s;
 	g_intern.fwd.set(heap_s, g_intern.count);
@@ -484,10 +489,16 @@ fn Value mk_str(String s) {
 // Same string content always returns the same Value bits, enabling
 // fingerprint cache hits in __element without deep equality checks.
 HashMap{String, Value}* g_str_intern;
+HashMap{String, Value}* g_rec_intern;
 
 fn void str_intern_init() {
-	g_str_intern = mem::new(HashMap{String, Value});
-	g_str_intern.init(mem, 128);
+	g_str_intern = alloc::new(INTERN_ALLOC, HashMap{String, Value});
+	g_str_intern.init(INTERN_ALLOC, 128);
+}
+
+fn void rec_intern_init() {
+	g_rec_intern = alloc::new(INTERN_ALLOC, HashMap{String, Value});
+	g_rec_intern.init(INTERN_ALLOC, 128);
 }
 
 // mk_str_intern: intern a string literal. Returns a stable Value whose
@@ -497,8 +508,8 @@ fn void str_intern_init() {
 fn Value mk_str_intern(String s) {
 	if (g_str_intern == null) str_intern_init();
 	if (try v = g_str_intern.get(s)) return v;
-	String* p = mem::new(String);   // heap, not temp — stable across frames
-	*p = s.copy(mem);               // copy content into heap storage
+	String* p = alloc::new(INTERN_ALLOC, String);  // stable across frames and tests
+	*p = s.copy(INTERN_ALLOC);
 	Value v = val_str(p);
 	g_str_intern.set(*p, v);        // key is the heap copy; content-equal lookups will hit
 	return v;
@@ -2527,17 +2538,49 @@ fn EvalResult eval_step(AstNode* node, Env* env) {
 		case RECORD:
 
 		{
-			Record* r = new_record();
-			// Use pre-interned name_ids from the AST (no runtime intern() call).
-			r.keys = node.name_ids;
-			Value[] vals = mem::talloc_array(Value, node.children.len);
-			for (int i = 0; i < node.children.len; i++) {
+			sz n = node.children.len;
+			Value[] vals = mem::talloc_array(Value, n);
+			for (int i = 0; i < n; i++) {
 				EvalResult e = eval(node.children[i], env);
 				if (e.thrown) return e;
 				vals[i] = e.value;
 			}
-			r.values = vals;
-			return { .value = val_rec(r) };
+			// Intern literal records by content: same key IDs + same value bits
+			// → same Record* → stable fingerprint for __element slot cache.
+			// Only literal RECORD nodes are interned; record_spread and set results
+			// are intentionally excluded (they carry mutation semantics).
+			if (g_rec_intern == null) rec_intern_init();
+			// Build a lookup key: [keys bytes][vals bytes] as a flat byte string.
+			DString kbuf; kbuf.tinit();
+			for (sz i = 0; i < n; i++) {
+				uint kid = node.name_ids[i];
+				kbuf.append((String)((char*)&kid)[0:4]);  // uint = 4 bytes
+			}
+			for (sz i = 0; i < n; i++) {
+				Value vb = vals[i];
+				kbuf.append((String)((char*)&vb)[0:8]);  // Value (ulong) = 8 bytes
+			}
+			String lookup_key = kbuf.str_view();
+			if (try cached = g_rec_intern.get(lookup_key)) {
+				return { .value = cached };
+			}
+			// Miss: allocate a new record and insert into the intern table.
+			Record* r = alloc::new(INTERN_ALLOC, Record);
+			// High refcount: interned records are immortal — they must never be
+			// freed by rc_dec_val (which would call mem::free on a libc pointer).
+			r.refcount = 0x7FFFFFFF;
+			// Copy keys and values to INTERN_ALLOC so they survive past the
+			// eval scope (node.name_ids may be temp-allocated).
+			uint[] heap_keys = alloc::new_array(INTERN_ALLOC, uint, n);
+			for (sz i = 0; i < n; i++) heap_keys[i] = node.name_ids[i];
+			r.keys = heap_keys;
+			Value[] heap_vals = alloc::new_array(INTERN_ALLOC, Value, n);
+			for (sz i = 0; i < n; i++) heap_vals[i] = vals[i];
+			r.values = heap_vals;
+			Value rv = val_rec(r);
+			String heap_key = lookup_key.copy(INTERN_ALLOC);
+			g_rec_intern.set(heap_key, rv);
+			return { .value = rv };
 		}
 		case ARRAY_LIT:
 

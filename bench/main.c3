@@ -4,8 +4,8 @@
 //   CACHED  : view() uses JSX (<Comp prop=val />) routed through __element
 //   UNCACHED: view() calls component functions directly (bypasses __element cache)
 //
-// With string interning, string literals "Todo", "Buy milk" etc. produce stable
-// Value bits across frames → fingerprint hits → components skip re-allocation.
+// String interning + record interning: all literal props produce stable Value bits
+// across frames → __element fingerprint hits → 0 allocs/frame after warmup.
 
 module bench;
 import engine;
@@ -124,10 +124,10 @@ fn void main() {
 
 	io::printfn("\n=== JSX stable-ref memoization benchmark ===");
 	io::printfn("5-component tree: Root + Header + Item×3, props passed as records");
-	io::printfn("Props records are freshly allocated each frame (record interning pending)");
-	io::printfn("→ __element fingerprint misses; shows baseline overhead vs direct calls");
+	io::printfn("Record interning: literal props records have stable Value bits across frames");
+	io::printfn("→ __element fingerprint hits → 0 allocs/frame after warmup");
 	io::printfn("CACHED  : JSX → __element");
-	io::printfn("UNCACHED: direct component calls");
+	io::printfn("UNCACHED: direct component calls (1 children array/frame, no memoization)");
 	io::printfn("");
 	io::printfn("%-12s  %-10s  %-10s  %-10s  %-10s  %-12s",
 	            "path", "frames", "arrays", "records", "total", "per_frame");
