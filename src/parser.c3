@@ -11,7 +11,7 @@ enum TokKind : char
 	TK_NUM, TK_STR, TK_IDENT,
 	TK_LPAREN, TK_RPAREN, TK_LBRACE, TK_RBRACE, TK_LBRACK, TK_RBRACK,
 	TK_SEMI, TK_COMMA, TK_DOT, TK_DOTDOT, TK_DOTDOTDOT, TK_COLON, TK_EQ, TK_ARROW, TK_BANG,
-	TK_PLUS, TK_MINUS, TK_STAR, TK_SLASH,
+	TK_PLUS, TK_MINUS, TK_STAR, TK_SLASH, TK_PERCENT,
 	TK_EQEQ, TK_NEQ, TK_LT, TK_GT, TK_LE, TK_GE,
 	TK_AND, TK_OR, TK_QUESTQUEST,
 	TK_KW_LET, TK_KW_FN, TK_KW_IF, TK_KW_THEN, TK_KW_ELSE,
@@ -258,6 +258,7 @@ fn Token lex_one(Lexer* l, long start_line, long start_col)
 	}
 	if (c == '*') { t.kind = TK_STAR; t.text = "*"; l.pos++; return t; }
 	if (c == '/') { t.kind = TK_SLASH; t.text = "/"; l.pos++; return t; }
+	if (c == '%') { t.kind = TK_PERCENT; t.text = "%"; l.pos++; return t; }
 	if (c == '$') { t.kind = TK_DOLLAR; t.text = "$"; l.pos++; return t; }
 	if (c == '!')
 	{
@@ -638,7 +639,7 @@ fn AstNode* parse_add(Parser* p)
 fn AstNode* parse_mul(Parser* p)
 {
 	AstNode* left = parse_unary(p);
-	while (!p.error && (parser_check(p, TK_STAR) || parser_check(p, TK_SLASH)))
+	while (!p.error && (parser_check(p, TK_STAR) || parser_check(p, TK_SLASH) || parser_check(p, TK_PERCENT)))
 	{
 		String op = parser_cur(p).text;
 		parser_advance(p);

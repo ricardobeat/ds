@@ -1463,6 +1463,16 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 				return { .thrown = true, .value = mk_str("division by zero") };
 			}
 			return { .value = mk_num(as_num(args[0]) / as_num(args[1])) };
+		case "%":
+			if (!is_num(args[0]) || !is_num(args[1])) {
+				return { .thrown = true, .value = mk_str("type error: % expects numbers") };
+			}
+			if (as_num(args[1]) == 0.0) {
+				return { .thrown = true, .value = mk_str("division by zero") };
+			}
+			double a = as_num(args[0]);
+			double b = as_num(args[1]);
+			return { .value = mk_num(a - (double)((long)(a / b)) * b) };
 		case "===":
 			return { .value = mk_bool(strict_eq(args[0], args[1])) };
 		case "<":
@@ -2666,7 +2676,7 @@ Env* builtin_env;
 fn Env* make_builtin_env()
 {
 	String[] names = {
-		"+", "-", "*", "/",
+		"+", "-", "*", "/", "%",
 		"===", "<", ">", "<=", ">=",
 		"and", "or",
 		"is_number", "is_string", "is_bool", "is_array", "is_record", "is_nil",
