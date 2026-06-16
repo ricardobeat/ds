@@ -729,6 +729,11 @@ fn AstNode* parse_element(Parser* p)
 			// Allow dot-access expressions like state.width
 			v = parse_postfix(p);
 		}
+		else if (parser_check(p, TK_LBRACK))
+		{
+			// Array literal: attr=[expr, expr, ...]
+			v = parse_postfix(p);
+		}
 		else if (parser_accept(p, TK_LPAREN))
 		{
 			// Allow arbitrary expressions in parens: attr=(expr)
