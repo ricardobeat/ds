@@ -329,7 +329,7 @@ fn EvalResult ds_list(Value[] args) {
 		return { .value = empty };
 	}
 	// Build child node array: one text_node per item
-	Value* child_arr = mem::talloc_array(Value, (sz)n);
+	Value* child_arr = mem::new_array(Value, (sz)n);
 	for (int i = 0; i < n; i++) {
 		Value item = arr_get(items, i);
 		bool selected = (i == cursor);

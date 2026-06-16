@@ -32,10 +32,14 @@ let initial_state = {
 // ── Pure update helpers ────────────────────────────────────────────
 
 let clamp = fn(v, lo, hi) {
-  if v < lo then lo else if v > hi then hi else v
+  if v < lo then lo
+  else if v > hi then hi
+  else v
 }
 
-let toggle_done = fn(item) { { ...item, done: !item.done } }
+let toggle_done = fn(item) {
+  { ...item, done: !item.done }
+}
 
 let map_todos = fn(todos, i, f) {
   mapi(todos, fn(item, j) { if j === i then f(item) else item })
@@ -59,11 +63,12 @@ fn update_list(state, { code, rune }) {
              let cursor = clamp(state.cursor, 0, len(todos) - 1)
              { ...state, todos: todos, cursor: cursor }
            }
-    _   -> match code {
-             k_up   -> { ...state, cursor: clamp(state.cursor - 1, 0, n - 1) }
-             k_down -> { ...state, cursor: clamp(state.cursor + 1, 0, n - 1) }
-             _      -> state
-           }
+    _ ->
+      match code {
+        k_up   -> { ...state, cursor: clamp(state.cursor - 1, 0, n - 1) }
+        k_down -> { ...state, cursor: clamp(state.cursor + 1, 0, n - 1) }
+        _      -> state
+      }
   }
 }
 
@@ -125,7 +130,8 @@ let view = fn(state) {
 
   <VStack gap=1>
     header,
-    if state.mode === MODE_ADD then add_view else list_view
+    if state.mode === MODE_ADD then add_view
+    else list_view
   </VStack>
 }
 

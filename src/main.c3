@@ -1775,7 +1775,7 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 				if (r.thrown) return r;
 				call_result = r.value;
 			} else {
-				Value[] kids = mem::talloc_array(Value, (sz)nkids);
+				Value[] kids = mem::new_array(Value, (sz)nkids);
 				for (int i = 0; i < nkids; i++) kids[i] = args[i + 2];
 				Array* kids_arr = new_array();
 				kids_arr.items = kids;

@@ -84,11 +84,13 @@ fn Value engine_mk_str(String s) {
 // Build a DS record from parallel key/value arrays.
 fn Value engine_mk_record(String[] keys, Value[] values) {
 	Record* r = new_record();
-	uint[] ids = mem::talloc_array(uint, keys.len);
-	Value[] vals = mem::talloc_array(Value, keys.len);
+	uint[] ids = mem::new_array(uint, keys.len);
+	Value[] vals = mem::new_array(Value, keys.len);
 	for (int i = 0; i < keys.len; i++) {
-		ids[i]  = intern(keys[i]);
-		vals[i] = values[i];
+		ids[i] = intern(keys[i]);
+		// Re-intern string Values so their String* boxes are heap-stable.
+		// Records built here may be cached across @pool() frame boundaries.
+		vals[i] = is_str(values[i]) ? mk_str_intern(*as_str(values[i])) : values[i];
 	}
 	r.keys   = ids;
 	r.values = vals;
@@ -103,8 +105,10 @@ fn Value engine_mk_tagged(String tag, Value payload) {
 // Build a DS array from a slice of Values.
 fn Value engine_mk_array(Value[] values) {
 	Array* a = new_array();
-	Value* buf = mem::talloc_array(Value, values.len);
-	for (sz i = 0; i < values.len; i++) buf[i] = values[i];
+	Value* buf = mem::new_array(Value, values.len);
+	for (sz i = 0; i < values.len; i++) {
+		buf[i] = is_str(values[i]) ? mk_str_intern(*as_str(values[i])) : values[i];
+	}
 	a.items = buf[:values.len];
 	return val_arr(a);
 }
