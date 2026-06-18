@@ -25,42 +25,46 @@ bench: build
 
 # Build and run the todo TUI app (DS-scripted)
 todo:
-    c3c build todo && ./build/todo
+    c3c build ds && ./build/ds example/todo/todo.ds
 
-# Build the todo host binary (needed for all DS examples below)
-build-todo:
-    c3c build todo
+# Build the ds-run host binary
+build-ds:
+    c3c build ds
 
-# DS example apps — each requires `just build-todo` first
-counter: build-todo
-    ./build/todo examples/counter.ds
+# Run any .ds file: just ds <file>
+ds file: build-ds
+    ./build/ds {{file}}
 
-spinner: build-todo
-    ./build/todo examples/spinner.ds
+# DS example apps
+counter: build-ds
+    ./build/ds examples/counter.ds
 
-progress: build-todo
-    ./build/todo examples/progress.ds
+spinner: build-ds
+    ./build/ds examples/spinner.ds
 
-tabs: build-todo
-    ./build/todo examples/tabs.ds
+progress: build-ds
+    ./build/ds examples/progress.ds
 
-timer: build-todo
-    ./build/todo examples/timer.ds
+tabs: build-ds
+    ./build/ds examples/tabs.ds
 
-repl: build-todo
-    ./build/todo examples/repl.ds
+timer: build-ds
+    ./build/ds examples/timer.ds
 
-snake: build-todo
-    ./build/todo examples/snake.ds
+repl: build-ds
+    ./build/ds examples/repl.ds
+
+snake: build-ds
+    ./build/ds examples/snake.ds
 
 # Run all DS examples in sequence (each must be quit with q)
-examples: build-todo
-    @echo "=== counter ===" && ./build/todo examples/counter.ds || true
-    @echo "=== spinner ===" && ./build/todo examples/spinner.ds || true
-    @echo "=== progress ===" && ./build/todo examples/progress.ds || true
-    @echo "=== tabs ===" && ./build/todo examples/tabs.ds || true
-    @echo "=== timer ===" && ./build/todo examples/timer.ds || true
-    @echo "=== repl ===" && ./build/todo examples/repl.ds || true
+examples: build-ds
+    @echo "=== counter ===" && ./build/ds examples/counter.ds || true
+    @echo "=== spinner ===" && ./build/ds examples/spinner.ds || true
+    @echo "=== progress ===" && ./build/ds examples/progress.ds || true
+    @echo "=== tabs ===" && ./build/ds examples/tabs.ds || true
+    @echo "=== timer ===" && ./build/ds examples/timer.ds || true
+    @echo "=== repl ===" && ./build/ds examples/repl.ds || true
 
 # Build and run the raylib 3D demo
 raylib: build-raylib-plugin

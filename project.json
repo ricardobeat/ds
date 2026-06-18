@@ -38,7 +38,7 @@
         "example/src/main.c3"
       ]
     },
-    "todo": {
+    "ds": {
       "type": "executable",
       "dependencies": ["milktea", "glaze", "xray"],
       "sources": [
