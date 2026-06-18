@@ -1,34 +1,45 @@
 ## DS language syntax highlighting for GNU nano
-## Place in ~/.nanorc or add to /usr/share/nano/
+## Place in ~/.nanorc or include with: include "/path/to/ds.nanorc"
 
 syntax "ds" "\.ds$"
 
-## Comments
-color brightblack   "^//.*$"
-color brightblack   "/\*" "\*/"
+## Comments — must come first so they override other rules
+## Use start+end form for line comments so they match anywhere on a line
+color brightblack   start="//" end="$"
+color brightblack   start="/\*" end="\*/"
 
-## Strings
-color brightyellow  "\"[^"]*\""  "`[^`]*`"
+## Strings (double-quoted and backtick raw strings)
+color brightyellow  "\"([^\"\\]|\\.)*\""
+color brightyellow  "`[^`]*`"
 
 ## Numbers
 color brightcyan    "\<[0-9]+\.[0-9]+\>"
 color brightcyan    "\<[0-9]+\>"
 
-## Keywords
-color brightgreen   "\<(let|fn|if|then|else|throw|try|catch|match|type)\>"
+## Keywords — control flow and declarations
+color brightgreen   "\<(let|fn|if|then|else|match|type|throw|try|catch|and|or|from|import)\>"
 
 ## Literals
 color brightmagenta "\<(true|false|nil)\>"
 
 ## Builtin functions
-color brightblue    "\<(len|print|is_array|is_record|is_number|is_string|is_bool|is_nil)\>"
+color brightblue    "\<(len|push|slice|map|mapi|filter|filteri|reduce|array_all|has_field)\>"
+color brightblue    "\<(print|is_array|is_record|is_number|is_string|is_bool|is_nil)\>"
+color brightblue    "\<(signal|signal_get|signal_set|derived|effect)\>"
+color brightblue    "\<(floor|ceil|round|abs|max|min)\>"
+color brightblue    "\<(str_repeat|num_to_str|str_pad_left|str_pad_right|str_slice|str_concat|string_width)\>"
+color brightblue    "\<(join_vertical|join_horizontal|style_render|run_model)\>"
 
-## JSX/Element tags
-color brightred     "\</?[_a-zA-Z][_a-zA-Z0-9]*"
-color brightred     "/?\>"
+## JSX component tags — UpperCamelCase identifiers after < or </
+color brightred     "</?[A-Z][_a-zA-Z0-9]*"
+color brightred     "/?>"
 
-## Operators
-color brightwhite   "(===|!==|<=|>=|->|\.\.)"
+## Operators (longest match first)
+color brightwhite   "(===|!==|\.\.\.|\?\?|<=|>=|->|\.\.)"
+color brightwhite   "[+\-*/%!]"
 
 ## Punctuation / brackets
-color brightwhite   "[{}\[\]()]"
+color white         "[{}\[\]().,;:]"
+
+## Signal sugar — $ prefix for signal variables
+color brightmagenta "\$[_a-zA-Z][_a-zA-Z0-9]*"
