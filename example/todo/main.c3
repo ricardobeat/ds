@@ -99,6 +99,41 @@ fn glaze::Style node_style(Value node) @local {
 	return s;
 }
 
+// Flatten one level: if any child in the children array is itself an array,
+// inline its elements. This lets DS code pass a variable holding an array
+// of nodes as the sole child of <HStack> or <VStack>.
+fn Value[] flat_children(Value children) @local {
+	int n = arr_len(children);
+	// Fast path: no nested arrays.
+	bool has_nested = false;
+	for (int i = 0; i < n; i++) {
+		if (val_is_arr(arr_get(children, i))) { has_nested = true; break; }
+	}
+	if (!has_nested) {
+		Value[] out = mem::talloc_array(Value, (sz)n);
+		for (int i = 0; i < n; i++) out[i] = arr_get(children, i);
+		return out[:n];
+	}
+	// Count total flat elements.
+	int total = 0;
+	for (int i = 0; i < n; i++) {
+		Value c = arr_get(children, i);
+		total += val_is_arr(c) ? arr_len(c) : 1;
+	}
+	Value[] out = mem::talloc_array(Value, (sz)total);
+	int idx = 0;
+	for (int i = 0; i < n; i++) {
+		Value c = arr_get(children, i);
+		if (val_is_arr(c)) {
+			int m = arr_len(c);
+			for (int j = 0; j < m; j++) out[idx++] = arr_get(c, j);
+		} else {
+			out[idx++] = c;
+		}
+	}
+	return out[:total];
+}
+
 fn String render_node(Value node) @local {
 	if (val_is_str(node)) return val_str(node);
 	if (!val_is_rec(node)) return "";
@@ -131,9 +166,10 @@ fn String render_node(Value node) @local {
 	}
 
 	if (t == "vstack") {
-		Value children = rec_get(node, "children");
-		if (!val_is_arr(children)) return "";
-		int n = arr_len(children);
+		Value children_v = rec_get(node, "children");
+		if (!val_is_arr(children_v)) return "";
+		Value[] flat = flat_children(children_v);
+		int n = (int)flat.len;
 		int gap = val_is_num(rec_get(node, "gap")) ? (int)val_num(rec_get(node, "gap")) : 0;
 		String[] parts = mem::talloc_array(String, (sz)(n + (n - 1) * gap));
 		int out_idx = 0;
@@ -143,16 +179,17 @@ fn String render_node(Value node) @local {
 					parts[out_idx++] = "";
 				}
 			}
-			parts[out_idx++] = render_node(arr_get(children, i));
+			parts[out_idx++] = render_node(flat[i]);
 		}
 		if (out_idx == 0) return "";
 		return glaze::join_vertical_arr(glaze::Position.LEFT, parts[:out_idx]).copy(mem);
 	}
 
 	if (t == "hstack") {
-		Value children = rec_get(node, "children");
-		if (!val_is_arr(children)) return "";
-		int n = arr_len(children);
+		Value children_v = rec_get(node, "children");
+		if (!val_is_arr(children_v)) return "";
+		Value[] flat = flat_children(children_v);
+		int n = (int)flat.len;
 		if (n == 0) return "";
 		int gap = val_is_num(rec_get(node, "gap")) ? (int)val_num(rec_get(node, "gap")) : 0;
 		int total_w = val_is_num(rec_get(node, "width")) ? (int)val_num(rec_get(node, "width")) : 0;
@@ -189,12 +226,12 @@ fn String render_node(Value node) @local {
 			xray::Rect area = xray::new_rect(0, 0, total_w, 1);
 			int nc = xray::layout_h_gap(area, cs[:n], gap, rects[:n]);
 			for (int i = 0; i < nc; i++) {
-				String raw = render_node(arr_get(children, i));
+				String raw = render_node(flat[i]);
 				parts[i] = glaze::style().width(rects[i].w).render(raw).copy(mem);
 			}
 		} else {
 			for (int i = 0; i < n; i++) {
-				parts[i] = render_node(arr_get(children, i));
+				parts[i] = render_node(flat[i]);
 			}
 		}
 		return glaze::join_horizontal_arr(glaze::Position.TOP, parts[:n], gap).copy(mem);
