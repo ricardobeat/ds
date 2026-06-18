@@ -276,6 +276,18 @@ fn void register_stubs() {
 	register_host_fn("join_vertical", &stub_join_v);
 	register_host_fn("join_horizontal", &stub_join_h);
 	register_host_fn("style_render",  &stub_style_render);
+
+	// Register `keys` as a namespace record so `keys.UP` and `from keys import *` work.
+	// Values match the stub key code numbers above.
+	engine::engine_init();
+	engine::engine_register_value("keys", engine::engine_mk_record(
+		{ "UP", "DOWN", "LEFT", "RIGHT", "ENTER", "BACKSPACE", "ESC", "RUNE", "CTRL_C", "DELETE" },
+		{
+			mk_num(65), mk_num(66), mk_num(68), mk_num(67),
+			mk_num(10), mk_num(127), mk_num(27), mk_num(0),
+			mk_num(3), mk_num(127),
+		}
+	));
 }
 
 // Evaluate a DS source string, returning the result value.
@@ -432,7 +444,7 @@ fn void test_tabs_initial_tab() @test {
 fn void test_tabs_navigate_right() @test {
 	String src = load_example(
 		"examples/tabs.ds",
-		"\nlet k = { code: right, rune: \"\", ctrl: false }\nlet s2 = update(state, { __tag: \"Key\", __val: k })\ns2.tab"
+		"\nlet k = { code: RIGHT, rune: \"\", ctrl: false }\nlet s2 = update(state, { __tag: \"Key\", __val: k })\ns2.tab"
 	);
 	Value result = eval_ds(src);
 	assert(is_num(result));
@@ -442,7 +454,7 @@ fn void test_tabs_navigate_right() @test {
 fn void test_repl_enter_adds_history() @test {
 	String src = load_example(
 		"examples/repl.ds",
-		"\nlet s2 = { ...state, input: \"hello\" }\nlet k = { code: enter, rune: \"\", ctrl: false }\nlet s3 = update(s2, { __tag: \"Key\", __val: k })\nlen(s3.history)"
+		"\nlet s2 = { ...state, input: \"hello\" }\nlet k = { code: ENTER, rune: \"\", ctrl: false }\nlet s3 = update(s2, { __tag: \"Key\", __val: k })\nlen(s3.history)"
 	);
 	Value result = eval_ds(src);
 	assert(is_num(result));
@@ -452,7 +464,7 @@ fn void test_repl_enter_adds_history() @test {
 fn void test_repl_q_quits_when_empty() @test {
 	String src = load_example(
 		"examples/repl.ds",
-		"\nlet k = { code: rune, rune: \"q\", ctrl: false }\nlet s2 = update(state, { __tag: \"Key\", __val: k })\nhas_field(s2, \"quit\")"
+		"\nlet k = { code: RUNE, rune: \"q\", ctrl: false }\nlet s2 = update(state, { __tag: \"Key\", __val: k })\nhas_field(s2, \"quit\")"
 	);
 	Value result = eval_ds(src);
 	assert(is_bool(result) && as_bool(result));

@@ -805,6 +805,25 @@ fn int main(String[] args) {
 	engine::engine_register("KEY_CTRL_C",    &ds_key_ctrl_c);
 	engine::engine_register("KEY_DELETE",    &ds_key_delete);
 
+	// Inject `keys` as a namespace record so `keys.UP`, `keys.ENTER` etc. work,
+	// and `from keys import *` can spread all fields into scope at runtime.
+	Value keys_rec = engine::engine_mk_record(
+		{ "UP", "DOWN", "LEFT", "RIGHT", "ENTER", "BACKSPACE", "ESC", "RUNE", "CTRL_C", "DELETE" },
+		{
+			engine::engine_mk_num((double)(int)milktea::KeyCode.UP),
+			engine::engine_mk_num((double)(int)milktea::KeyCode.DOWN),
+			engine::engine_mk_num((double)(int)milktea::KeyCode.LEFT),
+			engine::engine_mk_num((double)(int)milktea::KeyCode.RIGHT),
+			engine::engine_mk_num((double)(int)milktea::KeyCode.ENTER),
+			engine::engine_mk_num((double)(int)milktea::KeyCode.BACKSPACE),
+			engine::engine_mk_num((double)(int)milktea::KeyCode.ESC),
+			engine::engine_mk_num((double)(int)milktea::KeyCode.RUNE),
+			engine::engine_mk_num((double)(int)milktea::KeyCode.CTRL_C),
+			engine::engine_mk_num((double)(int)milktea::KeyCode.DELETE),
+		}
+	);
+	engine::engine_register_value("keys", keys_rec);
+
 	// Native node constructors — registered both as _node variants and as
 	// component names (VStack, HStack, Text, Box, Divider) so DS code can
 	// use them directly without wrapper boilerplate.

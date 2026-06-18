@@ -40,6 +40,20 @@ fn bool engine_register(String name, HostFn func) {
 	return ok;
 }
 
+// Register a pre-built Value directly into the builtin env (e.g. a namespace record).
+fn void engine_register_value(String name, Value v) {
+	if (builtin_env == null) return;
+	uint id = intern(name);
+	Binding new_binding = { .name_id = id, .value = v };
+	Binding* old = builtin_env.data.bindings_ptr;
+	uint n = builtin_env.count;
+	Binding* grown = mem::new_array(Binding, (sz)(n + 1));
+	for (uint i = 0; i < n; i++) grown[i] = old[i];
+	grown[n] = new_binding;
+	builtin_env.data.bindings_ptr = grown;
+	builtin_env.count = n + 1;
+}
+
 // ── Evaluation ───────────────────────────────────────────────────
 
 fn EvalResult engine_eval_result(String source) {

@@ -2,7 +2,7 @@
 // Type characters, Enter submits, Backspace deletes, q (empty) quits
 
 from milktea import { run }
-from keys import { enter, backspace, rune }
+from keys import { ENTER, BACKSPACE, RUNE }
 
 // ── State ─────────────────────────────────────────────────────────
 
@@ -17,19 +17,19 @@ fn update(state, msg) {
   match msg {
     Key(k) ->
       match k.code {
-        enter ->
+        ENTER ->
           if string_width(state.input) > 0 then {
             let h = push(state.history, "> " + state.input)
             { ...state, input: "", history: h }
           } else state
 
-        backspace -> {
+        BACKSPACE -> {
           let l = string_width(state.input)
           let new_input = if l > 0 then str_slice(state.input, 0, l - 1) else ""
           { ...state, input: new_input }
         }
 
-        rune ->
+        RUNE ->
           if string_width(state.input) === 0 and k.rune === "q"
             then { ...state, quit: true }
             else { ...state, input: state.input + k.rune }

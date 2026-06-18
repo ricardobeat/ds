@@ -213,6 +213,15 @@ struct ImportBinding {
 	bool   call;   // if true, bind `name = prim()` instead of `name = prim`
 }
 
+// All exported names for `from keys import *`
+const String[] ALL_KEY_NAMES = {
+	"UP", "DOWN", "LEFT", "RIGHT",
+	"ENTER", "BACKSPACE", "ESC",
+	"CTRL_C", "DELETE", "RUNE",
+	"PGUP", "PGDOWN", "HOME", "END",
+	"TAB", "SPACE",
+};
+
 fn ImportBinding resolve_module_import(String mod, String name) {
 	if (mod == "signals") {
 		if (name == "get") return { "signal_get", false };
@@ -226,10 +235,26 @@ fn ImportBinding resolve_module_import(String mod, String name) {
 		if (name == "run_model") return { "run_model", false };
 	}
 	// keys module: each import is a zero-arg host call that returns the key code.
-	// Supports both full names (KEY_UP) and shorthand (up, down, etc.).
-	// from keys import { up, down } → let up = KEY_UP(); let down = KEY_DOWN()
+	// from keys import { UP, DOWN } → let UP = KEY_UP(); let DOWN = KEY_DOWN()
+	// Uppercase constants are canonical; lowercase shorthands are kept for compat.
 	if (mod == "keys") {
-		// shorthand aliases
+		if (name == "UP")        return { "KEY_UP",        true };
+		if (name == "DOWN")      return { "KEY_DOWN",      true };
+		if (name == "LEFT")      return { "KEY_LEFT",      true };
+		if (name == "RIGHT")     return { "KEY_RIGHT",     true };
+		if (name == "ENTER")     return { "KEY_ENTER",     true };
+		if (name == "BACKSPACE") return { "KEY_BACKSPACE", true };
+		if (name == "ESC")       return { "KEY_ESC",       true };
+		if (name == "CTRL_C")    return { "KEY_CTRL_C",    true };
+		if (name == "DELETE")    return { "KEY_DELETE",    true };
+		if (name == "RUNE")      return { "KEY_RUNE",      true };
+		if (name == "PGUP")      return { "KEY_PGUP",      true };
+		if (name == "PGDOWN")    return { "KEY_PGDOWN",    true };
+		if (name == "HOME")      return { "KEY_HOME",      true };
+		if (name == "END")       return { "KEY_END",       true };
+		if (name == "TAB")       return { "KEY_TAB",       true };
+		if (name == "SPACE")     return { "KEY_SPACE",     true };
+		// lowercase shorthands for compat
 		if (name == "up")        return { "KEY_UP",        true };
 		if (name == "down")      return { "KEY_DOWN",      true };
 		if (name == "left")      return { "KEY_LEFT",      true };
@@ -240,7 +265,7 @@ fn ImportBinding resolve_module_import(String mod, String name) {
 		if (name == "ctrl_c")    return { "KEY_CTRL_C",    true };
 		if (name == "delete")    return { "KEY_DELETE",    true };
 		if (name == "rune")      return { "KEY_RUNE",      true };
-		// full names pass through as-is
+		// pass through anything else (e.g. KEY_UP verbatim)
 		return { name, true };
 	}
 	return { name, false };
@@ -414,6 +439,7 @@ struct Parser
 	bool has_cur;
 	bool error;
 	String error_msg;
+	int gensym_counter;
 }
 
 fn void parser_init(Parser* p, Lexer* l)
@@ -422,6 +448,13 @@ fn void parser_init(Parser* p, Lexer* l)
 	p.error = false;
 	p.error_msg = "";
 	p.has_cur = false;
+	p.gensym_counter = 0;
+}
+
+fn String parser_gensym(Parser* p, String prefix)
+{
+	p.gensym_counter++;
+	return string::tformat("%s%d", prefix, p.gensym_counter);
 }
 
 fn Token parser_advance(Parser* p)
@@ -1395,7 +1428,11 @@ fn AstNode* parse_primary(Parser* p)
 				parser_check(p, TK_KW_FALSE) ||
 				parser_check(p, TK_KW_NIL) ||
 				parser_check(p, TK_RBRACE) ||
-				(parser_check(p, TK_IDENT) && !is_upper_first(parser_cur(p).text));
+				// lowercase ident → always primitive (variable or wildcard pattern)
+				(parser_check(p, TK_IDENT) && !is_upper_first(parser_cur(p).text)) ||
+				// uppercase ident followed by '->' (not '(') → constant variable pattern
+				(parser_check(p, TK_IDENT) && is_upper_first(parser_cur(p).text)
+				 && p.lex.peek_tok.kind == TK_ARROW);
 			if (is_primitive_match)
 			{
 				AstNode*[] pm_patterns = {};
@@ -1432,7 +1469,7 @@ fn AstNode* parse_primary(Parser* p)
 					}
 					else if (parser_check(p, TK_IDENT))
 					{
-						// _ = wildcard; other lowercase ident = variable pattern (compare by value)
+						// _ = wildcard; ident (any case) = variable pattern (compare by value)
 						pat_node = make_var(parser_cur(p).text);
 						parser_advance(p);
 					}
@@ -1550,6 +1587,75 @@ fn AstNode* parse_toplevel(Parser* p)
 			AstNode* sig_init = make_call(make_var("signal"), { init });
 			return make_letrec(name, sig_init, make_lit(mk_nil()));
 		}
+		// let { a, b, ...rest } = expr  →  destructuring
+		if (parser_check(p, TK_LBRACE))
+		{
+			parser_advance(p); // consume '{'
+			// Collect field names and optional rest binding
+			String[32] field_names;
+			int nf = 0;
+			String rest_name = "";
+			while (!parser_check(p, TK_RBRACE) && !parser_check(p, TK_EOF))
+			{
+				if (parser_check(p, TK_DOTDOTDOT))
+				{
+					parser_advance(p);
+					if (!parser_check(p, TK_IDENT))
+					{
+						parser_set_error(p, "expected name after '...' in destructuring");
+						return make_lit(mk_nil());
+					}
+					rest_name = parser_cur(p).text;
+					parser_advance(p);
+					parser_accept(p, TK_COMMA);
+					break;
+				}
+				if (!parser_check(p, TK_IDENT))
+				{
+					parser_set_error(p, "expected field name in destructuring");
+					return make_lit(mk_nil());
+				}
+				field_names[nf++] = parser_cur(p).text;
+				parser_advance(p);
+				parser_accept(p, TK_COMMA);
+			}
+			if (!parser_accept(p, TK_RBRACE))
+			{
+				parser_set_error(p, "expected '}' to close destructuring pattern");
+				return make_lit(mk_nil());
+			}
+			if (!parser_accept(p, TK_EQ))
+			{
+				parser_set_error(p, "expected '=' in destructuring let");
+				return make_lit(mk_nil());
+			}
+			AstNode* rhs = parse_expr(p);
+			if (p.error) return rhs;
+			parser_accept(p, TK_SEMI);
+			// Emit: let __dN = rhs; let a = __dN.a; let b = __dN.b; [let rest = record_without(__dN, [...])]
+			// parse_program/parse_block_contents re-threads by reversing a LETREC chain,
+			// so we build in reverse evaluation order: rest (outermost after reversal = last),
+			// then fields right-to-left, then tmp (innermost after reversal = first-bound).
+			String tmp = parser_gensym(p, "__d");
+			AstNode* tmp_var = make_var(tmp);
+			AstNode* chain = make_letrec(tmp, rhs, make_lit(mk_nil()));
+			// Field bindings: left-to-right in source order = left-to-right after reversal
+			for (int i = 0; i < nf; i++)
+			{
+				AstNode* field_val = make_get(tmp_var, make_lit(mk_str(field_names[i])));
+				chain = make_letrec(field_names[i], field_val, chain);
+			}
+			// rest binding is last (will be bound last after reversal)
+			if (rest_name.len > 0)
+			{
+				AstNode*[] excl_elems = mem::talloc_array(AstNode*, (sz)nf);
+				for (int i = 0; i < nf; i++) excl_elems[i] = make_lit(mk_str(field_names[i]));
+				AstNode* excl_arr = make_array(excl_elems[:nf]);
+				AstNode* without = make_call(make_var("record_without"), { tmp_var, excl_arr });
+				chain = make_letrec(rest_name, without, chain);
+			}
+			return chain;
+		}
 		if (!parser_check(p, TK_IDENT))
 		{
 			parser_set_error(p, "expected name after 'let'");
@@ -1624,9 +1730,15 @@ fn AstNode* parse_toplevel(Parser* p)
 			parser_set_error(p, "expected 'import' after module name");
 			return make_lit(mk_nil());
 		}
+		// from mod import *  →  let { ... } = mod  (runtime record spread)
+		if (parser_accept(p, TK_STAR))
+		{
+			parser_accept(p, TK_SEMI);
+			return make_letrec_spread(make_var(mod), make_lit(mk_nil()));
+		}
 		if (!parser_accept(p, TK_LBRACE))
 		{
-			parser_set_error(p, "expected '{' after 'import'");
+			parser_set_error(p, "expected '{' or '*' after 'import'");
 			return make_lit(mk_nil());
 		}
 		// Collect imported names.
@@ -1693,7 +1805,17 @@ fn AstNode* parse_block_contents(Parser* p)
 		AstNode* item = items[i];
 		if (item.type == LETREC)
 		{
-			body = make_letrec(item.name, item.children[0], body);
+			// Flatten nested LETREC chains (e.g. from destructuring).
+			AstNode* chain = item;
+			while (chain.type == LETREC)
+			{
+				body = make_letrec(chain.name, chain.children[0], body);
+				chain = chain.children[1];
+			}
+		}
+		else if (item.type == LETREC_SPREAD)
+		{
+			body = make_letrec_spread(item.children[0], body);
 		}
 		else if (item.type == LET_T)
 		{
@@ -1734,7 +1856,7 @@ fn AstNode* parse_program(Parser* p)
 	{
 		AstNode* item = items[i];
 		// If `item` is a LetRec, take its name + init and rewrap with `body`.
-		// Flatten nested LetRec chains (from from...import).
+		// Flatten nested LetRec chains (from from...import and destructuring).
 		if (item.type == LETREC)
 		{
 			AstNode* chain = item;
@@ -1743,6 +1865,10 @@ fn AstNode* parse_program(Parser* p)
 				body = make_letrec(chain.name, chain.children[0], body);
 				chain = chain.children[1];
 			}
+		}
+		else if (item.type == LETREC_SPREAD)
+		{
+			body = make_letrec_spread(item.children[0], body);
 		}
 		else if (item.type == LET_T)
 		{

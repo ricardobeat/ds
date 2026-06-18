@@ -383,6 +383,7 @@ enum NodeType : char {
 	NULLCOAL,  // a ?? b: rhs when lhs throws or is nil
 	PRIM,
 	LETREC,
+	LETREC_SPREAD, // let { ... } = expr: bind all record fields into scope at runtime
 	SEQ,        // surface: sequential evaluation; desugars to ignored-binding lambdas
 	BINOP,      // surface: operator call; desugars to Call(Prim(op), [a, b])
 	METHODCALL, // surface: recv.m(args); desugars to Lambda-bind-r + Get+Call
@@ -732,6 +733,18 @@ fn AstNode* make_letrec(String name, AstNode* init, AstNode* body) {
 	n.name_id = intern(name);
 	AstNode*[] kids = mem::talloc_array(AstNode*, 2);
 	kids[0] = init;
+	kids[1] = body;
+	n.children = kids;
+	return n;
+}
+
+// make_letrec_spread: bind all fields of a record into scope at runtime.
+// children[0] = record expr, children[1] = body
+fn AstNode* make_letrec_spread(AstNode* rec_expr, AstNode* body) {
+	AstNode* n = mem::tnew(AstNode);
+	n.type = LETREC_SPREAD;
+	AstNode*[] kids = mem::talloc_array(AstNode*, 2);
+	kids[0] = rec_expr;
 	kids[1] = body;
 	n.children = kids;
 	return n;
@@ -1534,6 +1547,35 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 			res.values = out_vals[:n];
 			return { .value = val_rec(res) };
 		}
+		case "record_without":
+		{
+			// record_without(rec, [key, ...])  =>  new record with listed keys removed
+			if (!is_rec(args[0])) return { .thrown = true, .value = mk_str("type error: record_without expects record as first arg") };
+			if (!is_arr(args[1])) return { .thrown = true, .value = mk_str("type error: record_without expects array as second arg") };
+			Record* base = as_rec(args[0]);
+			Array*  excl = as_arr(args[1]);
+			// Build exclusion set as interned ids
+			uint[] excl_ids = mem::talloc_array(uint, excl.items.len);
+			for (sz i = 0; i < excl.items.len; i++) {
+				if (!is_str(excl.items[i])) return { .thrown = true, .value = mk_str("type error: record_without exclusion list must be strings") };
+				excl_ids[i] = intern(*as_str(excl.items[i]));
+			}
+			sz total = base.keys.len;
+			uint[] out_keys = mem::talloc_array(uint, total);
+			Value[] out_vals = mem::talloc_array(Value, total);
+			sz n = 0;
+			for (sz i = 0; i < base.keys.len; i++) {
+				bool skip = false;
+				for (sz j = 0; j < excl.items.len; j++) {
+					if (base.keys[i] == excl_ids[j]) { skip = true; break; }
+				}
+				if (!skip) { out_keys[n] = base.keys[i]; out_vals[n] = base.values[i]; n++; }
+			}
+			Record* res = new_record();
+			res.keys   = out_keys[:n];
+			res.values = out_vals[:n];
+			return { .value = val_rec(res) };
+		}
 		case "has_field":
 			if (!is_rec(args[0])) {
 				return { .thrown = true, .value = mk_str("type error: has_field expects record") };
@@ -2022,6 +2064,13 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 				for (int i = 0; i < e.children.len; i++) out[i] = desugar(e.children[i], tenv);
 				n.children = out;
 				return n;
+			}
+		case LETREC_SPREAD:
+			{
+				// Desugar children but keep the node type for the evaluator to handle.
+				AstNode* rec_d = desugar(e.children[0], tenv);
+				AstNode* body_d = desugar(e.children[1], tenv);
+				return make_letrec_spread(rec_d, body_d);
 			}
 		case SEQ:
 			return desugar_seq_kids(e.children);
@@ -2637,6 +2686,22 @@ fn EvalResult eval_step(AstNode* node, Env* env) {
 			rec.data.value = init.value;
 			return { .is_tail = true, .tail_node = node.children[1], .tail_env = rec };
 		}
+		case LETREC_SPREAD:
+		{
+			// Evaluate the record expression, then bind all its fields into a new env
+			// and evaluate the body in that env.
+			EvalResult rec_r = eval(node.children[0], env);
+			if (rec_r.thrown) return rec_r;
+			if (!is_rec(rec_r.value)) return { .thrown = true, .value = mk_str("type error: import * / let { ... } = requires a record") };
+			Record* rec = as_rec(rec_r.value);
+			// Bind each field into a fresh env chain
+			Env* e2 = env;
+			for (sz i = 0; i < rec.keys.len; i++) {
+				Env* slot = env_define(e2, rec.keys[i], rec.values[i]);
+				e2 = slot;
+			}
+			return { .is_tail = true, .tail_node = node.children[1], .tail_env = e2 };
+		}
 		case SEQ:
 		case BINOP:
 		case METHODCALL:
@@ -2670,7 +2735,7 @@ fn Env* make_builtin_env()
 		"===", "<", ">", "<=", ">=",
 		"and", "or",
 		"is_number", "is_string", "is_bool", "is_array", "is_record", "is_nil",
-		"record_spread", "has_field", "len", "push", "print", "array_all", "slice",
+		"record_spread", "record_without", "has_field", "len", "push", "print", "array_all", "slice",
 		"map", "mapi", "filter", "reduce", "filteri",
 		"signal", "signal_get", "signal_set", "derived", "effect",
 		"__element", "__begin_render",
