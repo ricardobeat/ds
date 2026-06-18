@@ -46,7 +46,7 @@ fn update(state, msg) {
             _   -> state
           }
       }
-    WindowSize(sz) -> { ...state, width: sz.width, height: sz.height }
+    WindowSize(_)  -> state
     Tick(_)        -> state
     None(_)        -> state
   }

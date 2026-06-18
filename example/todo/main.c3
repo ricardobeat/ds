@@ -310,6 +310,12 @@ fn milktea::Cmd DsModel.update(DsModel* self, milktea::Msg msg) @dynamic {
 				{ "width", "height" },
 				{ num_val((double)msg.window_size.width),
 				  num_val((double)msg.window_size.height) });
+			// Auto-inject width/height into the model state so programs don't
+			// need to handle WindowSize themselves.
+			if (engine::engine_is_record(g_state)) {
+				EvalResult merged = call_prim("record_spread", { g_state, size_rec });
+				if (!merged.thrown) g_state = merged.value;
+			}
 			msg_val = engine::engine_mk_tagged("WindowSize", size_rec);
 		case milktea::MsgKind.TICK:
 			msg_val = engine::engine_mk_tagged("Tick", nil_val());
