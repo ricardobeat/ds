@@ -1,14 +1,12 @@
 // counter.ds — Simple counter TUI app
 // Controls: ↑ to increment, ↓ to decrement, q to quit
 
+from milktea import { run }
+
 // ── Key constants ──────────────────────────────────────────────────
 
 let k_up   = KEY_UP()
 let k_down = KEY_DOWN()
-
-// ── App state ──────────────────────────────────────────────────────
-
-let initial_state = { value: 0, width: 80, height: 24 }
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -18,7 +16,7 @@ let clamp_val = fn(v, lo, hi) {
 
 // ── Model ──────────────────────────────────────────────────────────
 
-let init = fn() { initial_state }
+let state = { value: 0 }
 
 fn update(state, msg) {
   match msg {
@@ -38,9 +36,7 @@ fn update(state, msg) {
   }
 }
 
-// ── View ───────────────────────────────────────────────────────────
-
-let view = fn(state) {
+fn view(state) {
   let label = "Counter: " + num_to_str(state.value)
 
   <Box border="rounded" fg="#00d7ff" bold=true padding_x=3 padding_y=1>
@@ -53,4 +49,4 @@ let view = fn(state) {
 
 // ── Run ────────────────────────────────────────────────────────────
 
-run_model({ init: init, update: update, view: view })
+run({ state, update, view })

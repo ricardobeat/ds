@@ -1,14 +1,14 @@
 // spinner.ds — animated braille spinner TUI app
 
+from milktea import { run }
+
 // ── Spinner frames ────────────────────────────────────────────────
 
 let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
-// ── App state ─────────────────────────────────────────────────────
-
-let init = fn() { { frame: 0 } }
-
 // ── Model ─────────────────────────────────────────────────────────
+
+let state = { frame: 0 }
 
 fn update(state, msg) {
   match msg {
@@ -23,9 +23,7 @@ fn update(state, msg) {
   }
 }
 
-// ── View ──────────────────────────────────────────────────────────
-
-let view = fn(state) {
+fn view(state) {
   let spin = frames[state.frame]
   let title = spin + "  Loading..."
 
@@ -37,4 +35,4 @@ let view = fn(state) {
 
 // ── Run ──────────────────────────────────────────────────────────
 
-run_model({ init: init, update: update, view: view })
+run({ state, update, view })

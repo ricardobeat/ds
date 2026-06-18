@@ -1,6 +1,8 @@
 // tabs.ds — Tab navigation TUI app
 // Controls: ← → or h/l to switch tabs, q to quit
 
+from milktea import { run }
+
 // ── Key constants ──────────────────────────────────────────────────
 
 let k_left  = KEY_LEFT()
@@ -16,15 +18,6 @@ let tab_contents = [
   "Theme     Default\nBorder    Rounded\nColors    True color"
 ]
 
-// ── App state ──────────────────────────────────────────────────────
-
-let initial_state = {
-  tab:    0,
-  width:  80,
-  height: 24,
-  quit:   false
-}
-
 // ── Pure update helpers ────────────────────────────────────────────
 
 let clamp = fn(v, lo, hi) {
@@ -35,9 +28,9 @@ let clamp = fn(v, lo, hi) {
 
 // ── Model ──────────────────────────────────────────────────────────
 
-let init = fn() { initial_state }
+let state = { tab: 0 }
 
-let update = fn(state, msg) {
+fn update(state, msg) {
   match msg {
     Key(k) ->
       match k.code {
@@ -83,7 +76,7 @@ let render_tab_item = fn(name, idx, active_tab) {
   </Box>
 }
 
-let view = fn(state) {
+fn view(state) {
   let tab_items = map(tab_names, fn(name, idx) {
     render_tab_item(name, idx, state.tab)
   })
@@ -119,4 +112,4 @@ let view = fn(state) {
 
 // ── Run ────────────────────────────────────────────────────────────
 
-run_model({ init: init, update: update, view: view })
+run({ state, update, view })

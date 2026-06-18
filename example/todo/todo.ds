@@ -1,5 +1,7 @@
 // todo.ds — todo app built entirely in DS with JSX components
 
+from milktea import { run }
+
 // ── Key constants ──────────────────────────────────────────────────
 
 let k_enter     = KEY_ENTER()
@@ -21,7 +23,7 @@ let $star_frame = 0
 let MODE_LIST = "list"
 let MODE_ADD  = "add"
 
-let initial_state = {
+let state = {
   todos:  [
     { text: "Buy milk",           done: false },
     { text: "Write more DS code", done: false },
@@ -29,9 +31,7 @@ let initial_state = {
   ],
   cursor: 0,
   mode:   MODE_LIST,
-  input:  "",
-  width:  80,
-  height: 24
+  input:  ""
 }
 
 // ── Pure update helpers ────────────────────────────────────────────
@@ -55,8 +55,6 @@ let remove_at = fn(todos, idx) {
 }
 
 // ── Model ──────────────────────────────────────────────────────────
-
-let init = fn() { initial_state }
 
 fn update_list(state, { code, rune }) {
   let n = len(state.todos)
@@ -157,4 +155,4 @@ let view = fn(state) {
 
 // ── Run ────────────────────────────────────────────────────────────
 
-run_model({ init: init, update: update, view: view })
+run({ state, update, view })

@@ -247,6 +247,7 @@ fn void register_stubs() {
 	register_host_fn("KEY_CTRL_C",    &stub_key_ctrl_c);
 	register_host_fn("KEY_DELETE",    &stub_key_delete);
 	register_host_fn("run_model",     &stub_run_model);
+	register_host_fn("run",           &stub_run_model);
 
 	register_host_fn("Text",          &stub_text);
 	register_host_fn("VStack",        &stub_vstack);
@@ -310,7 +311,7 @@ fn Value eval_ds(String src) {
 	return r.value;
 }
 
-// Load a DS file, strip the last run_model(...) call, append extra suffix.
+// Load a DS file, strip the trailing run()/run_model() call, append extra suffix.
 fn String load_example(String path, String suffix) {
 	char[]? bytes = file::load_temp(path);
 	if (catch err = bytes) {
@@ -318,10 +319,10 @@ fn String load_example(String path, String suffix) {
 		return suffix;
 	}
 	String src = (String)bytes;
-	// Find last occurrence of "run_model"
+	// Find last occurrence of "run(" or "run_model("
 	sz last = src.len;
 	for (sz i = src.len; i > 0; i--) {
-		if (src[i - 1 ..].starts_with("run_model")) {
+		if (src[i - 1 ..].starts_with("run(") || src[i - 1 ..].starts_with("run_model(")) {
 			last = i - 1;
 			break;
 		}
@@ -346,7 +347,7 @@ fn void test_counter_view_renders_value() @test {
 }
 
 fn void test_counter_init_state() @test {
-	String src = load_example("examples/counter.ds", "\ninit()");
+	String src = load_example("examples/counter.ds", "\nstate");
 	Value result = eval_ds(src);
 	assert(is_rec(result));
 	Value v = rec_get_field(result, "value");
@@ -356,7 +357,7 @@ fn void test_counter_init_state() @test {
 fn void test_spinner_frame_advances() @test {
 	String src = load_example(
 		"examples/spinner.ds",
-		"\nlet s0 = init()\nlet s1 = update(s0, { __tag: \"Tick\", __val: nil })\ns1.frame"
+		"\nlet s1 = update(state, { __tag: \"Tick\", __val: nil })\ns1.frame"
 	);
 	Value result = eval_ds(src);
 	assert(is_num(result));
@@ -375,7 +376,7 @@ fn void test_spinner_view_renders_frame() @test {
 }
 
 fn void test_progress_init() @test {
-	String src = load_example("examples/progress.ds", "\ninit()");
+	String src = load_example("examples/progress.ds", "\nstate");
 	Value result = eval_ds(src);
 	assert(is_rec(result));
 	Value pct = rec_get_field(result, "pct");
@@ -385,7 +386,7 @@ fn void test_progress_init() @test {
 fn void test_progress_tick_advances() @test {
 	String src = load_example(
 		"examples/progress.ds",
-		"\nlet s = init()\nlet s2 = update(s, { __tag: \"Tick\", __val: nil })\ns2.pct"
+		"\nlet s2 = update(state, { __tag: \"Tick\", __val: nil })\ns2.pct"
 	);
 	Value result = eval_ds(src);
 	assert(is_num(result));
@@ -395,7 +396,7 @@ fn void test_progress_tick_advances() @test {
 fn void test_progress_fast_key() @test {
 	String src = load_example(
 		"examples/progress.ds",
-		"\nlet s = init()\nlet k = { code: 0, rune: \"f\", ctrl: false }\nlet s2 = update(s, { __tag: \"Key\", __val: k })\ns2.speed"
+		"\nlet k = { code: 0, rune: \"f\", ctrl: false }\nlet s2 = update(state, { __tag: \"Key\", __val: k })\ns2.speed"
 	);
 	Value result = eval_ds(src);
 	assert(is_num(result));
@@ -415,7 +416,7 @@ fn void test_timer_format() @test {
 fn void test_timer_countdown() @test {
 	String src = load_example(
 		"examples/timer.ds",
-		"\nlet s = init()\nlet s2 = update(s, { __tag: \"Tick\", __val: nil })\ns2.remaining"
+		"\nlet s2 = update(state, { __tag: \"Tick\", __val: nil })\ns2.remaining"
 	);
 	Value result = eval_ds(src);
 	assert(is_num(result));
@@ -423,7 +424,7 @@ fn void test_timer_countdown() @test {
 }
 
 fn void test_tabs_initial_tab() @test {
-	String src = load_example("examples/tabs.ds", "\ninit().tab");
+	String src = load_example("examples/tabs.ds", "\nstate.tab");
 	Value result = eval_ds(src);
 	assert(is_num(result) && as_num(result) == 0.0);
 }
@@ -431,7 +432,7 @@ fn void test_tabs_initial_tab() @test {
 fn void test_tabs_navigate_right() @test {
 	String src = load_example(
 		"examples/tabs.ds",
-		"\nlet s = init()\nlet k = { code: k_right, rune: \"\", ctrl: false }\nlet s2 = update(s, { __tag: \"Key\", __val: k })\ns2.tab"
+		"\nlet k = { code: k_right, rune: \"\", ctrl: false }\nlet s2 = update(state, { __tag: \"Key\", __val: k })\ns2.tab"
 	);
 	Value result = eval_ds(src);
 	assert(is_num(result));
@@ -441,7 +442,7 @@ fn void test_tabs_navigate_right() @test {
 fn void test_repl_enter_adds_history() @test {
 	String src = load_example(
 		"examples/repl.ds",
-		"\nlet s = init()\nlet s2 = { ...s, input: \"hello\" }\nlet k = { code: k_enter, rune: \"\", ctrl: false }\nlet s3 = update(s2, { __tag: \"Key\", __val: k })\nlen(s3.history)"
+		"\nlet s2 = { ...state, input: \"hello\" }\nlet k = { code: k_enter, rune: \"\", ctrl: false }\nlet s3 = update(s2, { __tag: \"Key\", __val: k })\nlen(s3.history)"
 	);
 	Value result = eval_ds(src);
 	assert(is_num(result));
@@ -451,7 +452,7 @@ fn void test_repl_enter_adds_history() @test {
 fn void test_repl_q_quits_when_empty() @test {
 	String src = load_example(
 		"examples/repl.ds",
-		"\nlet s = init()\nlet k = { code: k_rune, rune: \"q\", ctrl: false }\nlet s2 = update(s, { __tag: \"Key\", __val: k })\nhas_field(s2, \"quit\")"
+		"\nlet k = { code: k_rune, rune: \"q\", ctrl: false }\nlet s2 = update(state, { __tag: \"Key\", __val: k })\nhas_field(s2, \"quit\")"
 	);
 	Value result = eval_ds(src);
 	assert(is_bool(result) && as_bool(result));

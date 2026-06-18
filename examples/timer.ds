@@ -1,9 +1,11 @@
 // timer.ds — countdown timer TUI app
 // Controls: space=pause/resume, r=reset, q=quit
 
+from milktea import { run }
+
 // ── State ────────────────────────────────────────────────────────
 
-let initial_state = { total: 60, remaining: 60, running: true, done: false }
+let state = { total: 60, remaining: 60, running: true, done: false }
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -14,8 +16,6 @@ let format_time = fn(seconds) {
 }
 
 // ── Model ────────────────────────────────────────────────────────
-
-let init = fn() { initial_state }
 
 fn update(state, msg) {
   match msg {
@@ -41,7 +41,7 @@ fn update(state, msg) {
 
 // ── View ─────────────────────────────────────────────────────────
 
-let view = fn(state) {
+fn view(state) {
   let time_str = format_time(state.remaining)
 
   let timer_box =
@@ -65,4 +65,4 @@ let view = fn(state) {
 
 // ── Run ──────────────────────────────────────────────────────────
 
-run_model({ init: init, update: update, view: view })
+run({ state, update, view })

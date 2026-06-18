@@ -1,6 +1,8 @@
 // repl.ds — Interactive line-entry app (inputbox-style)
 // Type characters, Enter submits, Backspace deletes, q (empty) quits
 
+from milktea import { run }
+
 // ── Key constants ──────────────────────────────────────────────────
 
 let k_enter     = KEY_ENTER()
@@ -9,13 +11,9 @@ let k_rune      = KEY_RUNE()
 
 // ── State ─────────────────────────────────────────────────────────
 
-let init = fn() {
-  {
-    input:   "",
-    history: ["Welcome to DS REPL.", "Type something and press Enter.", "q (when empty) to quit."],
-    width:   80,
-    height:  24
-  }
+let state = {
+  input:   "",
+  history: ["Welcome to DS REPL.", "Type something and press Enter.", "q (when empty) to quit."]
 }
 
 // ── Model ─────────────────────────────────────────────────────────
@@ -53,7 +51,7 @@ fn update(state, msg) {
 
 let render_line = fn(text, _selected) { text }
 
-let view = fn(state) {
+fn view(state) {
   let header =
     <VStack gap=0>
       <Text bold=true fg="#00ffcc" value="  DS REPL" />
@@ -82,4 +80,4 @@ let view = fn(state) {
 
 // ── Run ──────────────────────────────────────────────────────────
 
-run_model({ init: init, update: update, view: view })
+run({ state, update, view })
