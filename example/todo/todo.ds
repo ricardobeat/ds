@@ -47,7 +47,7 @@ let toggle_done = fn(item) {
 }
 
 let map_todos = fn(todos, i, f) {
-  mapi(todos, fn(item, j) { if j === i then f(item) else item })
+  map(todos, fn(item, j) { if j === i then f(item) else item })
 }
 
 let remove_at = fn(todos, idx) {

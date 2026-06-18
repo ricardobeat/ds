@@ -1609,13 +1609,18 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 			return { .value = val_arr(r) };
 		}
 		case "map":
+		case "mapi":
 		{
 			if (!is_arr(args[0])) return { .thrown = true, .value = mk_str("type error: map expects array") };
 			if (!is_closure(args[1]) && !is_prim(args[1])) return { .thrown = true, .value = mk_str("type error: map expects function") };
 			Array* a = as_arr(args[0]);
 			Value[] out = mem::talloc_array(Value, a.items.len);
+			// Pass index as second arg when the callback declares 2+ parameters.
+			bool with_idx = is_closure(args[1]) && as_closure(args[1]).param_ids.len >= 2;
 			for (sz i = 0; i < a.items.len; i++) {
-				EvalResult r = call_fn(args[1], { a.items[i] });
+				EvalResult r = with_idx
+					? call_fn(args[1], { a.items[i], mk_num((double)i) })
+					: call_fn(args[1], { a.items[i] });
 				if (r.thrown) return r;
 				out[i] = r.value;
 			}
@@ -1637,21 +1642,6 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
 			}
 			Array* res = new_array();
 			res.items = tmp[:n];
-			return { .value = val_arr(res) };
-		}
-		case "mapi":
-		{
-			if (!is_arr(args[0])) return { .thrown = true, .value = mk_str("type error: mapi expects array") };
-			if (!is_closure(args[1]) && !is_prim(args[1])) return { .thrown = true, .value = mk_str("type error: mapi expects function") };
-			Array* a = as_arr(args[0]);
-			Value[] out = mem::talloc_array(Value, a.items.len);
-			for (sz i = 0; i < a.items.len; i++) {
-				EvalResult r = call_fn(args[1], { a.items[i], mk_num((double)i) });
-				if (r.thrown) return r;
-				out[i] = r.value;
-			}
-			Array* res = new_array();
-			res.items = out;
 			return { .value = val_arr(res) };
 		}
 		case "filteri":
@@ -2681,7 +2671,7 @@ fn Env* make_builtin_env()
 		"and", "or",
 		"is_number", "is_string", "is_bool", "is_array", "is_record", "is_nil",
 		"record_spread", "has_field", "len", "push", "print", "array_all", "slice",
-		"map", "filter", "reduce", "mapi", "filteri",
+		"map", "mapi", "filter", "reduce", "filteri",
 		"signal", "signal_get", "signal_set", "derived", "effect",
 		"__element", "__begin_render",
 		"loadlib",

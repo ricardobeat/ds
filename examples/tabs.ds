@@ -84,7 +84,7 @@ let render_tab_item = fn(name, idx, active_tab) {
 }
 
 let view = fn(state) {
-  let tab_items = mapi(tab_names, fn(name, idx) {
+  let tab_items = map(tab_names, fn(name, idx) {
     render_tab_item(name, idx, state.tab)
   })
 
