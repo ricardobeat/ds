@@ -368,3 +368,126 @@ fn void test_string_interning() @test
 	assert(v1 == v2, "interned string values must be identical");
 	assert(v1 != v3, "different strings must differ");
 }
+
+// ── Shorthand records ─────────────────────────────────────────────
+
+fn void test_shorthand_record_single() @test
+{
+	Value v = run_parsed("let x = 42; { x }.x");
+	assert(is_num(v) && as_num(v) == 42.0);
+}
+
+fn void test_shorthand_record_multiple() @test
+{
+	Value v = run_parsed("let x = 1; let y = 2; let r = { x, y }; r.x + r.y");
+	assert(is_num(v) && as_num(v) == 3.0);
+}
+
+fn void test_shorthand_record_mixed() @test
+{
+	Value v = run_parsed("let x = 10; { x, y: 20 }.y");
+	assert(is_num(v) && as_num(v) == 20.0);
+}
+
+// ── Record destructuring ──────────────────────────────────────────
+
+fn void test_destruct_basic() @test
+{
+	Value v = run_parsed("let rec = { x: 1, y: 2 }; let { x, y } = rec; x + y");
+	assert(is_num(v) && as_num(v) == 3.0);
+}
+
+fn void test_destruct_in_block() @test
+{
+	Value v = run_parsed("let rec = { a: 10, b: 20 }; { let { a, b } = rec; a * b }");
+	assert(is_num(v) && as_num(v) == 200.0);
+}
+
+fn void test_destruct_rest() @test
+{
+	Value v = run_parsed("let r = { x: 1, y: 2, z: 3 }; let { x, ...rest } = r; rest.y + rest.z");
+	assert(is_num(v) && as_num(v) == 5.0);
+}
+
+fn void test_destruct_rest_excludes_named() @test
+{
+	Value v = run_parsed("let r = { x: 1, y: 2 }; let { x, ...rest } = r; has_field(rest, \"x\")");
+	assert(is_bool(v) && !as_bool(v));
+}
+
+fn void test_destruct_rhs_evaluated_once() @test
+{
+	// The RHS is bound to a temp; field accesses all read from the same binding.
+	Value v = run_parsed("let r = { a: 5, b: 7 }; let { a, b } = r; a + b");
+	assert(is_num(v) && as_num(v) == 12.0);
+}
+
+// ── import * (LETREC_SPREAD) ──────────────────────────────────────
+
+fn void test_import_star_binds_fields() @test
+{
+	Value v = run_parsed("let mymod = { x: 10, y: 20 }; from mymod import *; x + y");
+	assert(is_num(v) && as_num(v) == 30.0);
+}
+
+fn void test_import_star_namespace_access() @test
+{
+	// Namespace record access works independently of import *.
+	Value v = run_parsed("let mymod = { val: 99 }; mymod.val");
+	assert(is_num(v) && as_num(v) == 99.0);
+}
+
+fn void test_import_star_in_block() @test
+{
+	Value v = run_parsed("let m = { a: 3, b: 4 }; { from m import *; a * b }");
+	assert(is_num(v) && as_num(v) == 12.0);
+}
+
+// ── record_without primitive ──────────────────────────────────────
+
+fn void test_record_without_removes_key() @test
+{
+	Value v = run_parsed("let r = { x: 1, y: 2, z: 3 }; has_field(record_without(r, [\"x\"]), \"x\")");
+	assert(is_bool(v) && !as_bool(v));
+}
+
+fn void test_record_without_keeps_others() @test
+{
+	Value v = run_parsed("let r = { x: 1, y: 2, z: 3 }; record_without(r, [\"x\"]).y");
+	assert(is_num(v) && as_num(v) == 2.0);
+}
+
+fn void test_record_without_multiple() @test
+{
+	Value v = run_parsed("let r = { a: 1, b: 2, c: 3 }; let r2 = record_without(r, [\"a\", \"b\"]); has_field(r2, \"c\")");
+	assert(is_bool(v) && as_bool(v));
+}
+
+// ── Match disambiguation: uppercase variable patterns ─────────────
+
+fn void test_match_uppercase_var_pattern() @test
+{
+	// Uppercase ident followed by '->' is a primitive variable pattern, not a tag.
+	Value v = run_parsed("let UP = 65; let code = 65; match code { UP -> true, _ -> false }");
+	assert(is_bool(v) && as_bool(v));
+}
+
+fn void test_match_uppercase_var_no_match() @test
+{
+	Value v = run_parsed("let UP = 65; let code = 99; match code { UP -> true, _ -> false }");
+	assert(is_bool(v) && !as_bool(v));
+}
+
+fn void test_match_tagged_still_works() @test
+{
+	// Tag(binding) arms still parse as tagged match.
+	Value v = run_parsed("let msg = { __tag: \"Key\", __val: 42 }; match msg { Key(k) -> k, Tick(t) -> 0 }");
+	assert(is_num(v) && as_num(v) == 42.0);
+}
+
+fn void test_match_mixed_case_patterns() @test
+{
+	// Mix of uppercase and lowercase variable patterns in one primitive match.
+	Value v = run_parsed("let A = 1; let b = 2; let x = 2; match x { A -> 10, b -> 20, _ -> 30 }");
+	assert(is_num(v) && as_num(v) == 20.0);
+}
