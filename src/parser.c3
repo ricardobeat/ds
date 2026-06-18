@@ -1421,6 +1421,8 @@ fn AstNode* parse_primary(Parser* p)
 				return scrut;
 			}
 			// Peek at the first arm to decide: tagged (UpperCamelCase IDENT) or primitive.
+			// Tagged match: first arm is `Ident(` — constructor pattern.
+			// Primitive match: everything else (literals, idents without '(', wildcards).
 			bool is_primitive_match =
 				parser_check(p, TK_NUM) ||
 				parser_check(p, TK_STR) ||
@@ -1428,11 +1430,7 @@ fn AstNode* parse_primary(Parser* p)
 				parser_check(p, TK_KW_FALSE) ||
 				parser_check(p, TK_KW_NIL) ||
 				parser_check(p, TK_RBRACE) ||
-				// lowercase ident → always primitive (variable or wildcard pattern)
-				(parser_check(p, TK_IDENT) && !is_upper_first(parser_cur(p).text)) ||
-				// uppercase ident followed by '->' (not '(') → constant variable pattern
-				(parser_check(p, TK_IDENT) && is_upper_first(parser_cur(p).text)
-				 && p.lex.peek_tok.kind == TK_ARROW);
+				(parser_check(p, TK_IDENT) && p.lex.peek_tok.kind != TK_LPAREN);
 			if (is_primitive_match)
 			{
 				AstNode*[] pm_patterns = {};
