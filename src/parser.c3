@@ -216,6 +216,11 @@ fn String resolve_module_import(String mod, String name) {
 		if (name == "derived") return "derived";
 		if (name == "effect") return "effect";
 	}
+	if (mod == "milktea") {
+		// run is the primary name; run_model kept for compatibility
+		if (name == "run") return "run";
+		if (name == "run_model") return "run_model";
+	}
 	return name; // unknown module: return as-is
 }
 

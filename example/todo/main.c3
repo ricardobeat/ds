@@ -266,16 +266,22 @@ Value g_state;
 struct DsModel { bool _pad; }
 
 fn milktea::Cmd DsModel.init(DsModel* self) @dynamic {
-	Value init_fn = rec_get(g_model_rec, "init");
-	if (!engine::engine_is_closure(init_fn)) {
-		io::eprintfn("[debug] init field is not a closure");
-		return null;
-	}
-	EvalResult r = engine::engine_call(init_fn, {});
-	if (r.thrown) {
-		io::eprintfn("[debug] init threw: %s", engine::engine_show(r.value));
+	// Accept { state: <value> } (direct initial state) or { init: fn() } (legacy).
+	Value state_v = rec_get(g_model_rec, "state");
+	if (!val_is_nil(state_v)) {
+		g_state = state_v;
 	} else {
-		g_state = r.value;
+		Value init_fn = rec_get(g_model_rec, "init");
+		if (!engine::engine_is_closure(init_fn)) {
+			io::eprintfn("[ds] run: model must have 'state' or 'init'");
+			return null;
+		}
+		EvalResult r = engine::engine_call(init_fn, {});
+		if (r.thrown) {
+			io::eprintfn("[ds] init threw: %s", engine::engine_show(r.value));
+		} else {
+			g_state = r.value;
+		}
 	}
 	return milktea::tick(80);
 }
@@ -347,7 +353,7 @@ fn milktea::View DsModel.view(DsModel* self) @dynamic {
 
 fn EvalResult ds_run_model(Value[] args) {
 	if (args.len < 1 || !val_is_rec(args[0])) {
-		return { .thrown = true, .value = str_val("run_model(model)") };
+		return { .thrown = true, .value = str_val("run(model): model must be a record with { state/init, update, view }") };
 	}
 	g_model_rec = args[0];
 	g_state     = nil_val();
@@ -779,6 +785,7 @@ fn EvalResult ds_str_concat(Value[] args) {
 fn int main(String[] args) {
 	engine::engine_init();
 
+	engine::engine_register("run",          &ds_run_model);
 	engine::engine_register("run_model",    &ds_run_model);
 
 	engine::engine_register("KEY_ENTER",     &ds_key_enter);
