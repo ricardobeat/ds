@@ -30,7 +30,7 @@ let view = fn(state) {
   let title = spin + "  Loading..."
 
   <VStack gap=1>
-    <Text bold=true fg="#00d7ff" value=title />,
+    <Text bold=true fg="#00d7ff" value=title />
     <Text dim=true value="Press q to quit" />
   </VStack>
 }

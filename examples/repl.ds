@@ -56,7 +56,7 @@ let render_line = fn(text, _selected) { text }
 let view = fn(state) {
   let header =
     <VStack gap=0>
-      <Text bold=true fg="#00ffcc" value="  DS REPL" />,
+      <Text bold=true fg="#00ffcc" value="  DS REPL" />
       <Divider width=state.width />
     </VStack>
 
@@ -73,9 +73,9 @@ let view = fn(state) {
     <Text dim=true value="  Enter to submit  ·  q (empty input) to quit" />
 
   <VStack gap=1>
-    header,
-    history_view,
-    input_area,
+    header
+    history_view
+    input_area
     hint
   </VStack>
 }

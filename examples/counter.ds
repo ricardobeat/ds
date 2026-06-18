@@ -45,7 +45,7 @@ let view = fn(state) {
 
   <Box border="rounded" fg="#00d7ff" bold=true padding_x=3 padding_y=1>
     <VStack gap=1>
-      <Text value=label bold=true />,
+      <Text value=label bold=true />
       <Text value="Use ↑↓ to change, q to quit" dim=true />
     </VStack>
   </Box>

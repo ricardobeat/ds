@@ -108,11 +108,11 @@ let view = fn(state) {
   let hint = "  ← → / h l  switch tabs    q  quit"
 
   <VStack gap=1>
-    <Text value="" />,
-    tab_bar,
-    <Text value="" />,
-    content_box,
-    <Text value="" />,
+    <Text value="" />
+    tab_bar
+    <Text value="" />
+    content_box
+    <Text value="" />
     <Text value=hint dim=true />
   </VStack>
 }

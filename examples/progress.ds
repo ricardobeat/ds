@@ -45,25 +45,25 @@ let view = fn(state) {
   let body =
     if state.done then
       <VStack gap=1>
-        <Text bold=true fg="#00ff88" value="✓ Complete!" />,
+        <Text bold=true fg="#00ff88" value="✓ Complete!" />
         <Text dim=true value="r to restart  ·  q to quit" />
       </VStack>
     else
       <VStack gap=1>
         <HStack gap=1>
-          <Text value=" Download " />,
+          <Text value=" Download " />
           <Text value=bar(pct, "█", "░", "#00d7ff") />
-        </HStack>,
+        </HStack>
         <HStack gap=1>
-          <Text value=" Compile  " />,
+          <Text value=" Compile  " />
           <Text value=bar(pct, "■", "□", "#ff00ff") />
-        </HStack>,
+        </HStack>
         <HStack gap=1>
-          <Text value=" Deploy   " />,
+          <Text value=" Deploy   " />
           <Text value=bar(pct, "=", "-", "#00ff88") />
-        </HStack>,
-        <Text value="" />,
-        <Text bold=true value=pct_str />,
+        </HStack>
+        <Text value="" />
+        <Text bold=true value=pct_str />
         <Text dim=true value="f fast  ·  s slow  ·  r restart  ·  q quit" />
       </VStack>
 

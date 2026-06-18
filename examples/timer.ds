@@ -58,7 +58,7 @@ let view = fn(state) {
       <Text fg="#ffff00" value="PAUSED  ·  SPACE to resume  ·  r reset  ·  q quit" />
 
   <VStack gap=2>
-    timer_box,
+    timer_box
     status
   </VStack>
 }
