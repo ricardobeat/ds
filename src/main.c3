@@ -2210,11 +2210,16 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
 						make_lambda({ bind }, body_branch),
 						{ make_get(make_var(s), make_lit(mk_str("__val"))) }
 					);
-					AstNode* eq = make_call(
-						make_prim_node("==="),
-						{ make_get(make_var(s), make_lit(mk_str("__tag"))), make_lit(mk_str(tag)), }
-					);
-					chain = make_if(eq, bound, chain);
+					if (tag == "") {
+						// Wildcard arm (_): always matches, replaces the throw default.
+						chain = bound;
+					} else {
+						AstNode* eq = make_call(
+							make_prim_node("==="),
+							{ make_get(make_var(s), make_lit(mk_str("__tag"))), make_lit(mk_str(tag)), }
+						);
+						chain = make_if(eq, bound, chain);
+					}
 				}
 				return make_call(make_lambda({ s }, chain), { scrut });
 			}

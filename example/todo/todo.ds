@@ -87,8 +87,7 @@ fn update(state, msg) {
     Key(k)         -> if state.mode === MODE_LIST then update_list(state, k)
                       else if state.mode === MODE_ADD then update_add(state, k)
                       else state
-    WindowSize(_)  -> state
-    Tick(_)        -> {
+    _ -> state
                        $star_frame = ($star_frame + 1) % len(star_frames);
                        state
                      }

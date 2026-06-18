@@ -1504,33 +1504,45 @@ fn AstNode* parse_primary(Parser* p)
 			int an = 0;
 			while (!parser_check(p, TK_RBRACE) && !parser_check(p, TK_EOF))
 			{
-				if (!parser_check(p, TK_IDENT) || !is_upper_first(parser_cur(p).text))
+				String tag;
+				String bind;
+				// Wildcard arm: _ -> expr  (catch-all, binds nothing)
+				if (parser_check(p, TK_IDENT) && parser_cur(p).text == "_")
 				{
-					parser_set_error(p, "expected UpperCamelCase tag in match arm");
-					return scrut;
+					tag = "";   // sentinel: empty tag = wildcard
+					bind = "_";
+					parser_advance(p);
 				}
-				String tag = parser_cur(p).text;
-				parser_advance(p);
-				if (!parser_accept(p, TK_LPAREN))
+				else
 				{
-					parser_set_error(p, "expected '(' after match tag");
-					return scrut;
-				}
-				if (!parser_check(p, TK_IDENT))
-				{
-					parser_set_error(p, "expected binding in match arm");
-					return scrut;
-				}
-				String bind = parser_cur(p).text;
-				parser_advance(p);
-				if (!parser_accept(p, TK_RPAREN))
-				{
-					parser_set_error(p, "expected ')' after match binding");
-					return scrut;
+					if (!parser_check(p, TK_IDENT) || !is_upper_first(parser_cur(p).text))
+					{
+						parser_set_error(p, "expected tag name or '_' in match arm");
+						return scrut;
+					}
+					tag = parser_cur(p).text;
+					parser_advance(p);
+					if (!parser_accept(p, TK_LPAREN))
+					{
+						parser_set_error(p, "expected '(' after match tag");
+						return scrut;
+					}
+					if (!parser_check(p, TK_IDENT))
+					{
+						parser_set_error(p, "expected binding in match arm");
+						return scrut;
+					}
+					bind = parser_cur(p).text;
+					parser_advance(p);
+					if (!parser_accept(p, TK_RPAREN))
+					{
+						parser_set_error(p, "expected ')' after match binding");
+						return scrut;
+					}
 				}
 				if (!parser_accept(p, TK_ARROW))
 				{
-					parser_set_error(p, "expected '=>' in match arm");
+					parser_set_error(p, "expected '->' in match arm");
 					return scrut;
 				}
 				AstNode* body_arm = parse_expr(p);

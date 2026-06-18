@@ -42,9 +42,7 @@ fn update(state, msg) {
             _   -> state
           }
       }
-    WindowSize(_)  -> state
-    Tick(_)        -> state
-    None(_)        -> state
+    _ -> state
   }
 }
 

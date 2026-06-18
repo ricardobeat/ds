@@ -33,8 +33,7 @@ fn update(state, msg) {
           then { ...state, pct: 100, done: true }
           else { ...state, pct: new_pct }
       }
-    WindowSize(sz) -> state
-    None(_)        -> state
+    _ -> state
   }
 }
 

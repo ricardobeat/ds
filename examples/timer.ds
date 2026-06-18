@@ -34,8 +34,7 @@ fn update(state, msg) {
           then { ...state, remaining: 0, done: true, running: false }
           else { ...state, remaining: next }
       } else state
-    WindowSize(sz) -> state
-    None(_)        -> state
+    _ -> state
   }
 }
 

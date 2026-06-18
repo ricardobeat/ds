@@ -18,8 +18,7 @@ fn update(state, msg) {
         _   -> state
       }
     Tick(_)        -> { ...state, frame: (state.frame + 1) % len(frames) }
-    WindowSize(sz) -> state
-    None(_)        -> state
+    _ -> state
   }
 }
 

@@ -480,9 +480,22 @@ fn void test_match_uppercase_var_no_match() @test
 
 fn void test_match_tagged_still_works() @test
 {
-	// Tag(binding) arms still parse as tagged match.
 	Value v = run_parsed("let msg = { __tag: \"Key\", __val: 42 }; match msg { Key(k) -> k, Tick(t) -> 0 }");
 	assert(is_num(v) && as_num(v) == 42.0);
+}
+
+fn void test_match_tagged_wildcard() @test
+{
+	// _ -> expr as a catch-all arm in a tagged match
+	Value v = run_parsed("let msg = { __tag: \"Tick\", __val: nil }; match msg { Key(k) -> 1, _ -> 99 }");
+	assert(is_num(v) && as_num(v) == 99.0);
+}
+
+fn void test_match_tagged_wildcard_not_reached() @test
+{
+	// _ arm is not taken when an earlier tag matches
+	Value v = run_parsed("let msg = { __tag: \"Key\", __val: 7 }; match msg { Key(k) -> k, _ -> 0 }");
+	assert(is_num(v) && as_num(v) == 7.0);
 }
 
 fn void test_match_mixed_case_patterns() @test
