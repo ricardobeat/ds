@@ -873,9 +873,12 @@ fn int main(String[] args) {
     engine::engine_register("KEY_CTRL_C", &ds_key_ctrl_c);
     engine::engine_register("KEY_DELETE", &ds_key_delete);
 
-    // Inject `keys` as a namespace record so `keys.UP`, `keys.ENTER` etc. work,
-    // and `from keys import *` can spread all fields into scope at runtime.
-    Value keys_rec = engine::engine_mk_record(
+    // Register modules accessible via `from mod import { X }` or `from mod import *`.
+    engine::engine_register_module("milktea", engine::engine_mk_record(
+        { "run", "run_model" },
+        { engine::engine_mk_prim("run"), engine::engine_mk_prim("run_model") }
+    ));
+    engine::engine_register_module("keys", engine::engine_mk_record(
         { "UP", "DOWN", "LEFT", "RIGHT", "ENTER", "BACKSPACE", "ESC", "RUNE", "CTRL_C", "DELETE" },
         {
             engine::engine_mk_num((double)(int)milktea::KeyCode.UP),
@@ -889,8 +892,7 @@ fn int main(String[] args) {
             engine::engine_mk_num((double)(int)milktea::KeyCode.CTRL_C),
             engine::engine_mk_num((double)(int)milktea::KeyCode.DELETE),
         }
-    );
-    engine::engine_register_value("keys", keys_rec);
+    ));
 
     // Native node constructors — registered both as _node variants and as
     // component names (VStack, HStack, Text, Box, Divider) so DS code can

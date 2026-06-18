@@ -180,7 +180,6 @@ fn long fmt_estimate_width(AstNode* e) {
         case NULLCOAL:
             return fmt_estimate_width(e.children[0]) + 4 + fmt_estimate_width(e.children[1]);
         case LETREC:
-        case LETREC_SPREAD:
         case LET_T:
         case TYPEDEF:
         case CONSTRUCT:
@@ -509,13 +508,6 @@ fn void fmt_expr(DString* buf, AstNode* e, int indent) {
                 fmt_indent(buf, indent);
                 buf.append_char('}');
             }
-            return;
-        case LETREC_SPREAD:
-            // from mod import * / let { ... } = expr
-            buf.append("from ");
-            fmt_expr(buf, e.children[0], indent);
-            buf.append(" import *;\n");
-            fmt_expr(buf, e.children[1], indent);
             return;
         case LETREC:
         case LET_T:

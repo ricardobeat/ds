@@ -88,36 +88,6 @@ fn EvalResult stub_list(Value[] args) {
     return { .value = mk_str("") };
 }
 
-fn EvalResult stub_key_up(Value[] args) {
-    return { .value = mk_num(65) };
-}
-fn EvalResult stub_key_down(Value[] args) {
-    return { .value = mk_num(66) };
-}
-fn EvalResult stub_key_left(Value[] args) {
-    return { .value = mk_num(68) };
-}
-fn EvalResult stub_key_right(Value[] args) {
-    return { .value = mk_num(67) };
-}
-fn EvalResult stub_key_enter(Value[] args) {
-    return { .value = mk_num(10) };
-}
-fn EvalResult stub_key_backspace(Value[] args) {
-    return { .value = mk_num(127) };
-}
-fn EvalResult stub_key_esc(Value[] args) {
-    return { .value = mk_num(27) };
-}
-fn EvalResult stub_key_rune(Value[] args) {
-    return { .value = mk_num(0) };
-}
-fn EvalResult stub_key_ctrl_c(Value[] args) {
-    return { .value = mk_num(3) };
-}
-fn EvalResult stub_key_delete(Value[] args) {
-    return { .value = mk_num(127) };
-}
 fn EvalResult stub_run_model(Value[] args) {
     return { .value = mk_nil() };
 }
@@ -274,16 +244,6 @@ fn void register_stubs() {
     if (g_stubs_registered) return;
     g_stubs_registered = true;
 
-    register_host_fn("KEY_UP", &stub_key_up);
-    register_host_fn("KEY_DOWN", &stub_key_down);
-    register_host_fn("KEY_LEFT", &stub_key_left);
-    register_host_fn("KEY_RIGHT", &stub_key_right);
-    register_host_fn("KEY_ENTER", &stub_key_enter);
-    register_host_fn("KEY_BACKSPACE", &stub_key_backspace);
-    register_host_fn("KEY_ESC", &stub_key_esc);
-    register_host_fn("KEY_RUNE", &stub_key_rune);
-    register_host_fn("KEY_CTRL_C", &stub_key_ctrl_c);
-    register_host_fn("KEY_DELETE", &stub_key_delete);
     register_host_fn("run_model", &stub_run_model);
     register_host_fn("run", &stub_run_model);
 
@@ -315,27 +275,33 @@ fn void register_stubs() {
     register_host_fn("join_horizontal", &stub_join_h);
     register_host_fn("style_render", &stub_style_render);
 
-    // Register `keys` as a namespace record so `keys.UP` and `from keys import *` work.
-    // Values match the stub key code numbers above.
     engine::engine_init();
-    engine::engine_register_value(
-        "keys",
-        engine::engine_mk_record(
-            { "UP", "DOWN", "LEFT", "RIGHT", "ENTER", "BACKSPACE", "ESC", "RUNE", "CTRL_C", "DELETE" },
-            {
-                mk_num(65),
-                mk_num(66),
-                mk_num(68),
-                mk_num(67),
-                mk_num(10),
-                mk_num(127),
-                mk_num(27),
-                mk_num(0),
-                mk_num(3),
-                mk_num(127),
-            }
-        )
-    );
+
+    // Register built-in modules accessible via `from mod import { X }`.
+    register_module("signals", engine_mk_record(
+        { "get", "set", "signal", "derived", "effect" },
+        { mk_prim("signal_get"), mk_prim("signal_set"), mk_prim("signal"),
+          mk_prim("derived"), mk_prim("effect") }
+    ));
+    register_module("milktea", engine_mk_record(
+        { "run", "run_model" },
+        { mk_prim("run"), mk_prim("run_model") }
+    ));
+    register_module("keys", engine_mk_record(
+        { "UP", "DOWN", "LEFT", "RIGHT", "ENTER", "BACKSPACE", "ESC", "RUNE", "CTRL_C", "DELETE" },
+        {
+            mk_num(65),
+            mk_num(66),
+            mk_num(68),
+            mk_num(67),
+            mk_num(10),
+            mk_num(127),
+            mk_num(27),
+            mk_num(0),
+            mk_num(3),
+            mk_num(127),
+        }
+    ));
 }
 
 // Evaluate a DS source string, returning the result value.

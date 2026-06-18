@@ -407,11 +407,6 @@ fn void compile_expr(Compiler* c, AstNode* node, bool tail_pos) {
             compile_expr(c, node.children[2], tail_pos);
             patch_jump(c.chunk, else_jump);
 
-        case LETREC_SPREAD:
-            // from mod import * — not supported in the bytecode compiler yet;
-            // fall back to the tree-walker path.
-            io::printfn("compiler: LETREC_SPREAD not yet supported in bytecode compiler");
-
         case LETREC:
             begin_scope(c);
             add_local(c, node.name_id);

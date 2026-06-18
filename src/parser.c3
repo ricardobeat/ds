@@ -264,68 +264,6 @@ fn Token lex_ident(Lexer* l, long start_line, long start_col) {
 }
 
 // Module import resolution: maps (module, local_name) → primitive name.
-struct ImportBinding {
-    String prim; // primitive name to bind
-    bool call; // if true, bind `name = prim()` instead of `name = prim`
-}
-
-// All exported names for `from keys import *`
-const String[] ALL_KEY_NAMES = {
-    "UP", "DOWN", "LEFT", "RIGHT",
-    "ENTER", "BACKSPACE", "ESC",
-    "CTRL_C", "DELETE", "RUNE",
-    "PGUP", "PGDOWN", "HOME", "END",
-    "TAB", "SPACE",
-    };
-
-fn ImportBinding resolve_module_import(String mod, String name) {
-    if (mod == "signals") {
-        if (name == "get") return { "signal_get", false };
-        if (name == "set") return { "signal_set", false };
-        if (name == "signal") return { "signal", false };
-        if (name == "derived") return { "derived", false };
-        if (name == "effect") return { "effect", false };
-    }
-    if (mod == "milktea") {
-        if (name == "run") return { "run", false };
-        if (name == "run_model") return { "run_model", false };
-    }
-    // keys module: each import is a zero-arg host call that returns the key code.
-    // from keys import { UP, DOWN } → let UP = KEY_UP(); let DOWN = KEY_DOWN()
-    // Uppercase constants are canonical; lowercase shorthands are kept for compat.
-    if (mod == "keys") {
-        if (name == "UP") return { "KEY_UP", true };
-        if (name == "DOWN") return { "KEY_DOWN", true };
-        if (name == "LEFT") return { "KEY_LEFT", true };
-        if (name == "RIGHT") return { "KEY_RIGHT", true };
-        if (name == "ENTER") return { "KEY_ENTER", true };
-        if (name == "BACKSPACE") return { "KEY_BACKSPACE", true };
-        if (name == "ESC") return { "KEY_ESC", true };
-        if (name == "CTRL_C") return { "KEY_CTRL_C", true };
-        if (name == "DELETE") return { "KEY_DELETE", true };
-        if (name == "RUNE") return { "KEY_RUNE", true };
-        if (name == "PGUP") return { "KEY_PGUP", true };
-        if (name == "PGDOWN") return { "KEY_PGDOWN", true };
-        if (name == "HOME") return { "KEY_HOME", true };
-        if (name == "END") return { "KEY_END", true };
-        if (name == "TAB") return { "KEY_TAB", true };
-        if (name == "SPACE") return { "KEY_SPACE", true };
-        // lowercase shorthands for compat
-        if (name == "up") return { "KEY_UP", true };
-        if (name == "down") return { "KEY_DOWN", true };
-        if (name == "left") return { "KEY_LEFT", true };
-        if (name == "right") return { "KEY_RIGHT", true };
-        if (name == "enter") return { "KEY_ENTER", true };
-        if (name == "backspace") return { "KEY_BACKSPACE", true };
-        if (name == "esc") return { "KEY_ESC", true };
-        if (name == "ctrl_c") return { "KEY_CTRL_C", true };
-        if (name == "delete") return { "KEY_DELETE", true };
-        if (name == "rune") return { "KEY_RUNE", true };
-        // pass through anything else (e.g. KEY_UP verbatim)
-        return { name, true };
-    }
-    return { name, false };
-}
 
 fn Token lex_one(Lexer* l, long start_line, long start_col) {
     Token t;
@@ -1752,10 +1690,12 @@ fn AstNode* parse_toplevel(Parser* p) {
             parser_set_error(p, "expected 'import' after module name");
             return make_lit(mk_nil());
         }
-        // from mod import *  →  let { ... } = mod  (runtime record spread)
+        // from mod import *  →  let mod = __mod_get("mod")
+        // Makes mod.FIELD access work; keeps the namespace explicit.
         if (parser_accept(p, TK_STAR)) {
             parser_accept(p, TK_SEMI);
-            return make_letrec_spread(make_var(mod), make_lit(mk_nil()));
+            AstNode* rec = make_call(make_var("__mod_get"), { make_lit(mk_str(mod)) });
+            return make_letrec(mod, rec, make_lit(mk_nil()));
         }
         if (!parser_accept(p, TK_LBRACE)) {
             parser_set_error(p, "expected '{' or '*' after 'import'");
@@ -1778,16 +1718,18 @@ fn AstNode* parse_toplevel(Parser* p) {
             return make_lit(mk_nil());
         }
         parser_accept(p, TK_SEMI);
-        // Build nested letrec bindings: let name = prim  or  let name = prim()
-        // For .call bindings (keys module) we emit a variable ref + call so the
-        // name resolves dynamically at runtime via the host function table.
-        AstNode* body = make_lit(mk_nil());
-        for (int i = nn - 1; i >= 0; i--) {
-            ImportBinding b = resolve_module_import(mod, names_buf[i]);
-            AstNode* rhs    = b.call ? make_call(make_var(b.prim), { }) : make_lit(mk_prim(b.prim));
-            body = make_letrec(names_buf[i], rhs, body);
+        // from mod import { A, B } → let __mod = __mod_get("mod"); let A = __mod.A; let B = __mod.B
+        // Gensym the temp so it doesn't collide with user names.
+        String tmp      = parser_gensym(p, "__mod");
+        AstNode* modval = make_call(make_var("__mod_get"), { make_lit(mk_str(mod)) });
+        // Build chain in reverse so parse_program's reversal gives correct order:
+        // outermost after reversal = first evaluated = tmp binding.
+        AstNode* chain = make_letrec(tmp, modval, make_lit(mk_nil()));
+        for (int i = 0; i < nn; i++) {
+            AstNode* field = make_get(make_var(tmp), make_lit(mk_str(names_buf[i])));
+            chain = make_letrec(names_buf[i], field, chain);
         }
-        return body;
+        return chain;
     }
     AstNode* e = parse_expr(p);
     parser_accept(p, TK_SEMI);
@@ -1821,8 +1763,6 @@ fn AstNode* parse_block_contents(Parser* p) {
                 body = make_letrec(chain.name, chain.children[0], body);
                 chain = chain.children[1];
             }
-        } else if (item.type == LETREC_SPREAD) {
-            body = make_letrec_spread(item.children[0], body);
         } else if (item.type == LET_T) {
             body = make_typed_let(item.name, item.ann_type, item.children[0], body);
         } else {
@@ -1866,8 +1806,6 @@ fn AstNode* parse_program(Parser* p) {
                 body = make_letrec(chain.name, chain.children[0], body);
                 chain = chain.children[1];
             }
-        } else if (item.type == LETREC_SPREAD) {
-            body = make_letrec_spread(item.children[0], body);
         } else if (item.type == LET_T) {
             body = make_typed_let(item.name, item.ann_type, item.children[0], body);
         } else {

@@ -13,9 +13,27 @@ import std::io;
 //   - String concat
 //   - The full sample end-to-end
 
+bool g_modules_registered;
+
+fn void ensure_modules_registered() {
+    if (g_modules_registered) return;
+    g_modules_registered = true;
+    // Register built-in module records so `from mod import { X }` resolves.
+    register_module("signals", engine_mk_record(
+        { "get", "set", "signal", "derived", "effect" },
+        { mk_prim("signal_get"), mk_prim("signal_set"), mk_prim("signal"),
+          mk_prim("derived"), mk_prim("effect") }
+    ));
+    register_module("milktea", engine_mk_record(
+        { "run", "run_model" },
+        { mk_prim("run"), mk_prim("run_model") }
+    ));
+}
+
 fn Value run_parsed(String src) {
     g_element_slot = 0;
     g_element_slots = { };
+    ensure_modules_registered();
     Env* env       = make_builtin_env();
     ParseResult pr = parse_source(src);
     if (pr.error) {
@@ -366,12 +384,9 @@ fn void test_destruct_rhs_evaluated_once() @test {
     assert(is_num(v) && as_num(v) == 12.0);
 }
 
-// ── import * (LETREC_SPREAD) ──────────────────────────────────────
-
-fn void test_import_star_binds_fields() @test {
-    Value v = run_parsed("let mymod = { x: 10, y: 20 }; from mymod import *; x + y");
-    assert(is_num(v) && as_num(v) == 30.0);
-}
+// ── import * ─────────────────────────────────────────────────────
+// `from mod import *` binds the module record as a local named `mod`,
+// so field access goes through `mod.field` — fields are not spread into scope.
 
 fn void test_import_star_namespace_access() @test {
     // Namespace record access works independently of import *.
@@ -379,9 +394,10 @@ fn void test_import_star_namespace_access() @test {
     assert(is_num(v) && as_num(v) == 99.0);
 }
 
-fn void test_import_star_in_block() @test {
-    Value v = run_parsed("let m = { a: 3, b: 4 }; { from m import *; a * b }");
-    assert(is_num(v) && as_num(v) == 12.0);
+fn void test_import_star_module_record() @test {
+    // from signals import * → local `signals` record; field access works.
+    Value v = run_parsed("from signals import *; is_nil(signals.get)");
+    assert(is_bool(v) && !as_bool(v));
 }
 
 // ── record_without primitive ──────────────────────────────────────

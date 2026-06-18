@@ -40,18 +40,10 @@ fn bool engine_register(String name, HostFn func) {
     return ok;
 }
 
-// Register a pre-built Value directly into the builtin env (e.g. a namespace record).
-fn void engine_register_value(String name, Value v) {
-    if (builtin_env == null) return;
-    uint id             = intern(name);
-    Binding new_binding = { .name_id = id, .value = v };
-    Binding* old        = builtin_env.data.bindings_ptr;
-    uint n              = builtin_env.count;
-    Binding* grown      = mem::new_array(Binding, (sz)(n + 1));
-    for (uint i = 0; i < n; i++) grown[i] = old[i];
-    grown[n] = new_binding;
-    builtin_env.data.bindings_ptr = grown;
-    builtin_env.count = n + 1;
+// Register a module record into the module table.
+// The module becomes accessible via `from name import { X }` or `from name import *`.
+fn void engine_register_module(String name, Value record) {
+    register_module(name, record);
 }
 
 // ── Evaluation ───────────────────────────────────────────────────
@@ -90,6 +82,7 @@ fn bool engine_is_closure(Value v) => is_closure(v);
 fn Value engine_mk_num(double d) => mk_num(d);
 fn Value engine_mk_bool(bool b) => mk_bool(b);
 fn Value engine_mk_nil() => mk_nil();
+fn Value engine_mk_prim(String name) => mk_prim(name);
 
 fn Value engine_mk_str(String s) {
     return mk_str(s);
@@ -102,9 +95,14 @@ fn Value engine_mk_record(String[] keys, Value[] values) {
     Value[] vals = mem::new_array(Value, keys.len);
     for (int i = 0; i < keys.len; i++) {
         ids[i] = intern(keys[i]);
-        // Re-intern string Values so their String* boxes are heap-stable.
-        // Records built here may be cached across @pool() frame boundaries.
-        vals[i] = is_str(values[i]) ? mk_str_intern(*as_str(values[i])) : values[i];
+        // Re-allocate strings and prims on the heap so records survive @pool() frame resets.
+        if (is_str(values[i])) {
+            vals[i] = mk_str_intern(*as_str(values[i]));
+        } else if (is_prim(values[i])) {
+            vals[i] = mk_prim_stable(as_prim(values[i]).name);
+        } else {
+            vals[i] = values[i];
+        }
     }
     r.keys = ids;
     r.values = vals;

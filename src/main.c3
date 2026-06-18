@@ -386,7 +386,6 @@ enum NodeType : char {
     NULLCOAL,      // a ?? b: rhs when lhs throws or is nil
     PRIM,
     LETREC,
-    LETREC_SPREAD, // let { ... } = expr: bind all record fields into scope at runtime
     SEQ,           // surface: sequential evaluation; desugars to ignored-binding lambdas
     BINOP,         // surface: operator call; desugars to Call(Prim(op), [a, b])
     METHODCALL,    // surface: recv.m(args); desugars to Lambda-bind-r + Get+Call
@@ -522,6 +521,13 @@ fn Value mk_str_intern(String s) {
 // heap so the 8-byte Value can point at it.
 fn Value mk_prim(String n) {
     Prim* p = mem::tnew(Prim);
+    p.name = n;
+    return val_prim(p);
+}
+
+// Heap-stable mk_prim for values that outlive a temp pool frame (e.g. module records).
+fn Value mk_prim_stable(String n) {
+    Prim* p = mem::new(Prim);
     p.name = n;
     return val_prim(p);
 }
@@ -734,18 +740,6 @@ fn AstNode* make_letrec(String name, AstNode* init, AstNode* body) {
     n.name_id = intern(name);
     AstNode*[] kids = mem::talloc_array(AstNode*, 2);
     kids[0] = init;
-    kids[1] = body;
-    n.children = kids;
-    return n;
-}
-
-// make_letrec_spread: bind all fields of a record into scope at runtime.
-// children[0] = record expr, children[1] = body
-fn AstNode* make_letrec_spread(AstNode* rec_expr, AstNode* body) {
-    AstNode* n = mem::tnew(AstNode);
-    n.type = LETREC_SPREAD;
-    AstNode*[] kids = mem::talloc_array(AstNode*, 2);
-    kids[0] = rec_expr;
     kids[1] = body;
     n.children = kids;
     return n;
@@ -1919,6 +1913,16 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
     if (name == "loadlib") {
         return loadlib_fn(args);
     }
+    if (name == "__mod_get") {
+        if (args.len < 1 || !is_str(args[0])) {
+            return { .thrown = true, .value = mk_str("__mod_get expects a module name string") };
+        }
+        Value rec = module_get(*as_str(args[0]));
+        if (is_nil(rec)) {
+            return { .thrown = true, .value = mk_str(string::tformat("unknown module: %s", *as_str(args[0]))) };
+        }
+        return { .value = rec };
+    }
     // Check host function table (registered by embedder)
     if (has_host_fn(name)) {
         return call_host_fn(name, args);
@@ -2142,14 +2146,6 @@ fn AstNode* desugar(AstNode* e, TypeDefEntry* tenv) {
                 for (int i = 0; i < e.children.len; i++) out[i] = desugar(e.children[i], tenv);
                 n.children = out;
                 return n;
-            }
-        case LETREC_SPREAD:
-
-            {
-                // Desugar children but keep the node type for the evaluator to handle.
-                AstNode* rec_d  = desugar(e.children[0], tenv);
-                AstNode* body_d = desugar(e.children[1], tenv);
-                return make_letrec_spread(rec_d, body_d);
             }
         case SEQ:
             return desugar_seq_kids(e.children);
@@ -2776,27 +2772,6 @@ fn EvalResult eval_step(AstNode* node, Env* env) {
                 rec.data.value = init.value;
                 return { .is_tail = true, .tail_node = node.children[1], .tail_env = rec };
             }
-        case LETREC_SPREAD:
-
-            {
-                // Evaluate the record expression, then bind all its fields into a new env
-                // and evaluate the body in that env.
-                EvalResult rec_r = eval(node.children[0], env);
-                if (rec_r.thrown) return rec_r;
-                if (!is_rec(
-                    rec_r.value
-                )) return { .thrown = true, .value = mk_str("type error: import * / let { ... } = requires a record") };
-                Record* rec = as_rec(rec_r.value);
-                // Bind each field into a fresh env chain
-
-
-                Env* e2 = env;
-                for (sz i = 0; i < rec.keys.len; i++) {
-                    Env* slot = env_define(e2, rec.keys[i], rec.values[i]);
-                    e2 = slot;
-                }
-                return { .is_tail = true, .tail_node = node.children[1], .tail_env = e2 };
-            }
         case SEQ:
         case BINOP:
         case METHODCALL:
@@ -2823,6 +2798,32 @@ fn EvalResult eval_step(AstNode* node, Env* env) {
 // environment chain.
 Env* builtin_env;
 
+// ── Module table ─────────────────────────────────────────────────────────────
+// Maps module name → record value. Populated by engine_register_module() before
+// eval. Accessed by the __mod_get primitive at runtime.
+
+struct ModuleEntry {
+    uint  name_id;
+    Value record;
+}
+
+ModuleEntry[32] g_module_table;
+int g_module_count;
+
+fn void register_module(String name, Value record) {
+    if (g_module_count < 32) {
+        g_module_table[g_module_count++] = { intern(name), record };
+    }
+}
+
+fn Value module_get(String name) {
+    uint id = intern(name);
+    for (int i = 0; i < g_module_count; i++) {
+        if (g_module_table[i].name_id == id) return g_module_table[i].record;
+    }
+    return mk_nil();
+}
+
 fn Env* make_builtin_env() {
     String[] names = {
         "+", "-", "*", "/", "%",
@@ -2833,7 +2834,7 @@ fn Env* make_builtin_env() {
         "map", "mapi", "filter", "reduce", "filteri",
         "signal", "signal_get", "signal_set", "derived", "effect",
         "__element", "__begin_render",
-        "loadlib",
+        "loadlib", "__mod_get",
         };
     Env* e = mem::tnew(Env);
     e.parent = null;
