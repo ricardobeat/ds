@@ -406,13 +406,12 @@ fn void test_record_without_multiple() @test {
 // ── Match disambiguation: uppercase variable patterns ─────────────
 
 fn void test_match_uppercase_var_pattern() @test {
-    // Uppercase ident followed by '->' is a primitive variable pattern, not a tag.
-    Value v = run_parsed("let UP = 65; let code = 65; match code { UP -> true, _ -> false }");
+    Value v = run_parsed("let UP = 65; let code = 65; match code { UP -> true, default -> false }");
     assert(is_bool(v) && as_bool(v));
 }
 
 fn void test_match_uppercase_var_no_match() @test {
-    Value v = run_parsed("let UP = 65; let code = 99; match code { UP -> true, _ -> false }");
+    Value v = run_parsed("let UP = 65; let code = 99; match code { UP -> true, default -> false }");
     assert(is_bool(v) && !as_bool(v));
 }
 
@@ -421,20 +420,32 @@ fn void test_match_tagged_still_works() @test {
     assert(is_num(v) && as_num(v) == 42.0);
 }
 
-fn void test_match_tagged_wildcard() @test {
-    // _ -> expr as a catch-all arm in a tagged match
-    Value v = run_parsed("let msg = { __tag: \"Tick\", __val: nil }; match msg { Key(k) -> 1, _ -> 99 }");
+fn void test_match_tagged_wildcard_default() @test {
+    Value v = run_parsed("let msg = { __tag: \"Tick\", __val: nil }; match msg { Key(k) -> 1, default -> 99 }");
+    assert(is_num(v) && as_num(v) == 99.0);
+}
+
+fn void test_match_tagged_wildcard_star() @test {
+    Value v = run_parsed("let msg = { __tag: \"Tick\", __val: nil }; match msg { Key(k) -> 1, * -> 99 }");
     assert(is_num(v) && as_num(v) == 99.0);
 }
 
 fn void test_match_tagged_wildcard_not_reached() @test {
-    // _ arm is not taken when an earlier tag matches
-    Value v = run_parsed("let msg = { __tag: \"Key\", __val: 7 }; match msg { Key(k) -> k, _ -> 0 }");
+    Value v = run_parsed("let msg = { __tag: \"Key\", __val: 7 }; match msg { Key(k) -> k, default -> 0 }");
     assert(is_num(v) && as_num(v) == 7.0);
 }
 
+fn void test_match_primitive_wildcard_default() @test {
+    Value v = run_parsed("match 5 { 1 -> \"one\", default -> \"other\" }");
+    assert(is_str(v) && *as_str(v) == "other");
+}
+
+fn void test_match_primitive_wildcard_star() @test {
+    Value v = run_parsed("match 5 { 1 -> \"one\", * -> \"other\" }");
+    assert(is_str(v) && *as_str(v) == "other");
+}
+
 fn void test_match_mixed_case_patterns() @test {
-    // Mix of uppercase and lowercase variable patterns in one primitive match.
-    Value v = run_parsed("let A = 1; let b = 2; let x = 2; match x { A -> 10, b -> 20, _ -> 30 }");
+    Value v = run_parsed("let A = 1; let b = 2; let x = 2; match x { A -> 10, b -> 20, default -> 30 }");
     assert(is_num(v) && as_num(v) == 20.0);
 }

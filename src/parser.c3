@@ -1465,11 +1465,12 @@ fn AstNode* parse_primary(Parser* p) {
             }
             // Peek at the first arm to decide: tagged (UpperCamelCase IDENT) or primitive.
             // Tagged match: first arm is `Ident(` — constructor pattern.
-            // Primitive match: everything else (literals, idents without '(', wildcards).
+            // Primitive match: everything else (literals, idents without '(', wildcards, * or default).
             bool is_primitive_match = parser_check(p, TK_NUM) || parser_check(p, TK_STR) || parser_check(p, TK_KW_TRUE)
                 || parser_check(p, TK_KW_FALSE)
                 || parser_check(p, TK_KW_NIL)
                 || parser_check(p, TK_RBRACE)
+                || parser_check(p, TK_STAR)
                 || (parser_check(p, TK_IDENT) && p.lex.peek_tok.kind != TK_LPAREN);
             if (is_primitive_match) {
                 AstNode*[] pm_patterns = { };
@@ -1493,12 +1494,17 @@ fn AstNode* parse_primary(Parser* p) {
                     } else if (parser_check(p, TK_KW_NIL)) {
                         pat_node = make_lit(mk_nil());
                         parser_advance(p);
+                    } else if (parser_check(p, TK_STAR)) {
+                        // * = wildcard catch-all
+                        pat_node = make_var("_");
+                        parser_advance(p);
                     } else if (parser_check(p, TK_IDENT)) {
-                        // _ = wildcard; ident (any case) = variable pattern (compare by value)
-                        pat_node = make_var(parser_cur(p).text);
+                        // _ or default = wildcard; other ident = variable pattern (compare by value)
+                        String pname = parser_cur(p).text;
+                        pat_node = make_var(pname == "default" ? "_" : pname);
                         parser_advance(p);
                     } else {
-                        parser_set_error(p, "expected literal, variable, or _ in match arm");
+                        parser_set_error(p, "expected literal, variable, * or default in match arm");
                         return scrut;
                     }
                     if (!parser_accept(p, TK_ARROW)) {
@@ -1536,7 +1542,9 @@ fn AstNode* parse_primary(Parser* p) {
                 // Wildcard arm: _ -> expr  (catch-all, binds nothing)
 
 
-                if (parser_check(p, TK_IDENT) && parser_cur(p).text == "_") {
+                if (parser_check(p, TK_STAR)
+                    || (parser_check(p, TK_IDENT) && (
+                        parser_cur(p).text == "_" || parser_cur(p).text == "default"))) {
                     tag = ""; // sentinel: empty tag = wildcard
                     bind = "_";
                     parser_advance(p);
