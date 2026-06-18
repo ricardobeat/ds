@@ -432,7 +432,7 @@ fn void test_tabs_initial_tab() @test {
 fn void test_tabs_navigate_right() @test {
 	String src = load_example(
 		"examples/tabs.ds",
-		"\nlet k = { code: k_right, rune: \"\", ctrl: false }\nlet s2 = update(state, { __tag: \"Key\", __val: k })\ns2.tab"
+		"\nlet k = { code: right, rune: \"\", ctrl: false }\nlet s2 = update(state, { __tag: \"Key\", __val: k })\ns2.tab"
 	);
 	Value result = eval_ds(src);
 	assert(is_num(result));
@@ -442,7 +442,7 @@ fn void test_tabs_navigate_right() @test {
 fn void test_repl_enter_adds_history() @test {
 	String src = load_example(
 		"examples/repl.ds",
-		"\nlet s2 = { ...state, input: \"hello\" }\nlet k = { code: k_enter, rune: \"\", ctrl: false }\nlet s3 = update(s2, { __tag: \"Key\", __val: k })\nlen(s3.history)"
+		"\nlet s2 = { ...state, input: \"hello\" }\nlet k = { code: enter, rune: \"\", ctrl: false }\nlet s3 = update(s2, { __tag: \"Key\", __val: k })\nlen(s3.history)"
 	);
 	Value result = eval_ds(src);
 	assert(is_num(result));
@@ -452,7 +452,7 @@ fn void test_repl_enter_adds_history() @test {
 fn void test_repl_q_quits_when_empty() @test {
 	String src = load_example(
 		"examples/repl.ds",
-		"\nlet k = { code: k_rune, rune: \"q\", ctrl: false }\nlet s2 = update(state, { __tag: \"Key\", __val: k })\nhas_field(s2, \"quit\")"
+		"\nlet k = { code: rune, rune: \"q\", ctrl: false }\nlet s2 = update(state, { __tag: \"Key\", __val: k })\nhas_field(s2, \"quit\")"
 	);
 	Value result = eval_ds(src);
 	assert(is_bool(result) && as_bool(result));

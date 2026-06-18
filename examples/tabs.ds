@@ -2,11 +2,7 @@
 // Controls: ← → or h/l to switch tabs, q to quit
 
 from milktea import { run }
-
-// ── Key constants ──────────────────────────────────────────────────
-
-let k_left  = KEY_LEFT()
-let k_right = KEY_RIGHT()
+from keys import { left, right }
 
 // ── Tab data ────────────────────────────────────────────────────────
 
@@ -34,9 +30,9 @@ fn update(state, msg) {
   match msg {
     Key(k) ->
       match k.code {
-        k_left ->
+        left ->
           { ...state, tab: clamp(state.tab - 1, 0, len(tab_names) - 1) }
-        k_right ->
+        right ->
           { ...state, tab: clamp(state.tab + 1, 0, len(tab_names) - 1) }
         _ ->
           match k.rune {

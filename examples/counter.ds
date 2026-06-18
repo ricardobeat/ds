@@ -2,11 +2,7 @@
 // Controls: ↑ to increment, ↓ to decrement, q to quit
 
 from milktea import { run }
-
-// ── Key constants ──────────────────────────────────────────────────
-
-let k_up   = KEY_UP()
-let k_down = KEY_DOWN()
+from keys import { up, down }
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -22,8 +18,8 @@ fn update(state, msg) {
   match msg {
     Key(k) ->
       match k.code {
-        k_up   -> { ...state, value: state.value + 1 }
-        k_down -> { ...state, value: state.value - 1 }
+        up   -> { ...state, value: state.value + 1 }
+        down -> { ...state, value: state.value - 1 }
         _      ->
           match k.rune {
             "q" -> { ...state, quit: true }

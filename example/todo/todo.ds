@@ -1,17 +1,7 @@
 // todo.ds — todo app built entirely in DS with JSX components
 
 from milktea import { run }
-
-// ── Key constants ──────────────────────────────────────────────────
-
-let k_enter     = KEY_ENTER()
-let k_backspace = KEY_BACKSPACE()
-let k_esc       = KEY_ESC()
-let k_up        = KEY_UP()
-let k_down      = KEY_DOWN()
-let k_rune      = KEY_RUNE()
-let k_ctrl_c    = KEY_CTRL_C()
-let k_delete    = KEY_DELETE()
+from keys import { enter, backspace, esc, up, down, rune, ctrl_c, delete }
 
 // ── Animation ──────────────────────────────────────────────────────
 

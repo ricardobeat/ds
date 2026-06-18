@@ -208,20 +208,42 @@ fn Token lex_ident(Lexer* l, long start_line, long start_col)
 }
 
 // Module import resolution: maps (module, local_name) → primitive name.
-fn String resolve_module_import(String mod, String name) {
+struct ImportBinding {
+	String prim;   // primitive name to bind
+	bool   call;   // if true, bind `name = prim()` instead of `name = prim`
+}
+
+fn ImportBinding resolve_module_import(String mod, String name) {
 	if (mod == "signals") {
-		if (name == "get") return "signal_get";
-		if (name == "set") return "signal_set";
-		if (name == "signal") return "signal";
-		if (name == "derived") return "derived";
-		if (name == "effect") return "effect";
+		if (name == "get") return { "signal_get", false };
+		if (name == "set") return { "signal_set", false };
+		if (name == "signal") return { "signal", false };
+		if (name == "derived") return { "derived", false };
+		if (name == "effect") return { "effect", false };
 	}
 	if (mod == "milktea") {
-		// run is the primary name; run_model kept for compatibility
-		if (name == "run") return "run";
-		if (name == "run_model") return "run_model";
+		if (name == "run") return { "run", false };
+		if (name == "run_model") return { "run_model", false };
 	}
-	return name; // unknown module: return as-is
+	// keys module: each import is a zero-arg host call that returns the key code.
+	// Supports both full names (KEY_UP) and shorthand (up, down, etc.).
+	// from keys import { up, down } → let up = KEY_UP(); let down = KEY_DOWN()
+	if (mod == "keys") {
+		// shorthand aliases
+		if (name == "up")        return { "KEY_UP",        true };
+		if (name == "down")      return { "KEY_DOWN",      true };
+		if (name == "left")      return { "KEY_LEFT",      true };
+		if (name == "right")     return { "KEY_RIGHT",     true };
+		if (name == "enter")     return { "KEY_ENTER",     true };
+		if (name == "backspace") return { "KEY_BACKSPACE", true };
+		if (name == "esc")       return { "KEY_ESC",       true };
+		if (name == "ctrl_c")    return { "KEY_CTRL_C",    true };
+		if (name == "delete")    return { "KEY_DELETE",    true };
+		if (name == "rune")      return { "KEY_RUNE",      true };
+		// full names pass through as-is
+		return { name, true };
+	}
+	return { name, false };
 }
 
 fn Token lex_one(Lexer* l, long start_line, long start_col)
@@ -1627,13 +1649,17 @@ fn AstNode* parse_toplevel(Parser* p)
 			return make_lit(mk_nil());
 		}
 		parser_accept(p, TK_SEMI);
-		// Build nested letrec bindings: let get = signal_get; let set = signal_set; ...
-		// The module table maps (module, local_name) → primitive_name.
+		// Build nested letrec bindings: let name = prim  or  let name = prim()
+		// For .call bindings (keys module) we emit a variable ref + call so the
+		// name resolves dynamically at runtime via the host function table.
 		AstNode* body = make_lit(mk_nil());
 		for (int i = nn - 1; i >= 0; i--)
 		{
-			String prim = resolve_module_import(mod, names_buf[i]);
-			body = make_letrec(names_buf[i], make_lit(mk_prim(prim)), body);
+			ImportBinding b = resolve_module_import(mod, names_buf[i]);
+			AstNode* rhs = b.call
+				? make_call(make_var(b.prim), {})
+				: make_lit(mk_prim(b.prim));
+			body = make_letrec(names_buf[i], rhs, body);
 		}
 		return body;
 	}
