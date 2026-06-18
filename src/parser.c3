@@ -999,12 +999,17 @@ fn AstNode* parse_record_lit(Parser* p)
 				}
 				String k = parser_cur(p).text;
 				parser_advance(p);
-				if (!parser_accept(p, TK_COLON))
+				// Shorthand field: { name } desugars to { name: name }
+				AstNode* v;
+				if (!parser_check(p, TK_COLON))
 				{
-					parser_set_error(p, "expected ':' after record field name");
-					return make_record({}, {});
+					v = make_var(k);
 				}
-				AstNode* v = parse_expr(p);
+				else
+				{
+					parser_advance(p); // consume ':'
+					v = parse_expr(p);
+				}
 				if (p.error) return make_record({}, {});
 				String[] nk = mem::talloc_array(String, (sz)(n + 1));
 				AstNode*[] nv = mem::talloc_array(AstNode*, (sz)(n + 1));
@@ -1266,9 +1271,14 @@ fn AstNode* parse_primary(Parser* p)
 			return e;
 		case TK_LBRACE:
 			parser_advance(p);
-			// Disambiguate: IDENT ":" → record literal, otherwise → block expression
-			if ((parser_check(p, TK_IDENT) && p.lex.peek_tok.kind == TK_COLON) ||
-			    parser_check(p, TK_DOTDOTDOT))
+			// Disambiguate: record literal vs block expression.
+			// Record if: starts with `...`, or starts with `ident :` (explicit field),
+			// or starts with `ident ,` / `ident }` (shorthand field: { x, y } = { x: x, y: y }).
+			if (parser_check(p, TK_DOTDOTDOT) ||
+			    (parser_check(p, TK_IDENT) && (
+			        p.lex.peek_tok.kind == TK_COLON ||
+			        p.lex.peek_tok.kind == TK_COMMA ||
+			        p.lex.peek_tok.kind == TK_RBRACE)))
 			{
 				return parse_record_lit(p);
 			}
