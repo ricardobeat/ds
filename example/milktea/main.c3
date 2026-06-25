@@ -294,9 +294,12 @@ struct DsModel {
 
 fn milktea::Cmd DsModel.init(DsModel* self) @dynamic {
     // Accept { state: <value> } (direct initial state) or { init: fn() } (legacy).
-    Value state_v = rec_get(g_model_rec, "state");
-    if (!val_is_nil(state_v)) {
-        g_state = state_v;
+    // Test for the field's presence, not its value: a model whose state is nil
+    // (e.g. one that keeps all its data in signals) is still a valid state model.
+    EvalResult has_state = engine::engine_call_prim("has_field", { g_model_rec, str_val("state") });
+    bool has_state_field = !has_state.thrown && engine::engine_is_bool(has_state.value) && val_bool(has_state.value);
+    if (has_state_field) {
+        g_state = rec_get(g_model_rec, "state");
     } else {
         Value init_fn = rec_get(g_model_rec, "init");
         if (!engine::engine_is_closure(init_fn)) {
@@ -363,7 +366,12 @@ fn milktea::Cmd DsModel.update(DsModel* self, milktea::Msg msg) @dynamic {
 }
 
 fn milktea::View DsModel.view(DsModel* self) @dynamic {
-    engine::engine_begin_render();
+    // milktea re-renders the whole view every frame, and a DS view may read
+    // signals directly inside a component (not through its props). Drop the
+    // element memoization table each frame so those reads stay live instead of
+    // serving a stale cached subtree. (engine_begin_render alone only rewinds
+    // the slot cursor and would keep the fingerprint cache.)
+    engine::engine_reset_render_cache();
     Value view_fn = rec_get(g_model_rec, "view");
     EvalResult r  = engine::engine_call(view_fn, { g_state });
     if (r.thrown) {

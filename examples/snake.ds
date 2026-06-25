@@ -1,220 +1,154 @@
-// snake.ds — Terminal snake game using reactive signals
+// snake.ds — Terminal snake, rendered with milktea
 //
-// Run: ./build/engine run resources/snake.ds
-// Controls: w/a/s/d or arrow keys, q to quit
+// Run:      ./build/ds examples/snake.ds   (or ./build/todo examples/snake.ds)
+// Controls: arrow keys or w/a/s/d to steer, q to quit
+//
+// The game state lives in $-signals (mutable reactive cells); milktea owns
+// the loop and rendering. `update` mutates the signals on each Tick/Key; `view`
+// reads them. The milktea host re-renders every frame, so the returned state is
+// just a marker and doesn't need to carry the game data.
 
-// --- Load terminal plugin ---
+from milktea import { run }
+from keys import { UP, DOWN, LEFT, RIGHT }
 
-from "./build/libterm" import *
-from signals import { signal, derived }
+let ROWS = 18
+let COLS = 36
 
-let ROWS = 20
-let COLS = 40
+// ── Game state as signals ──────────────────────────────────────────
 
-// --- Game state as signals ---
-
-let $snake = [{r: 10, c: 20}, {r: 10, c: 19}, {r: 10, c: 18}]
-let $dir   = 1
-let $food  = {r: 5, c: 15}
+let $snake = [{r: 9, c: 18}, {r: 9, c: 17}, {r: 9, c: 16}]
+let $dir   = 1    // 0 up, 1 right, 2 down, 3 left
+let $food  = {r: 5, c: 13}
 let $score = 0
 let $alive = true
 
-// Derived: current head position
-let head_sig = derived(fn() { $snake[0] })
+// ── Helpers ────────────────────────────────────────────────────────
 
-// Derived: status line
-let status_sig = derived(fn() {
-  let h = signal_get(head_sig)
-  let s = $score
-  let a = $alive
-  if a then "Score: " + s + "  "
-  else "GAME OVER! Score: " + s
-})
+let dr = fn(d) { if d === 0 then -1 else if d === 2 then 1 else 0 }
+let dc = fn(d) { if d === 3 then -1 else if d === 1 then 1 else 0 }
 
-// --- Helpers ---
-
-let wrap = fn(val, max) {
-  if val >= max then wrap(val - max, max) else val
-}
-
-let dr = fn(d) {
-  if d === 0 then -1 else if d === 2 then 1 else 0
-}
-
-let dc = fn(d) {
-  if d === 1 then 1 else if d === 3 then -1 else 0
-}
-
-let hits_snake = fn(snake, r, c, i) {
+let hits = fn(snake, r, c, i) {
   if i >= len(snake) then false
   else if snake[i].r === r and snake[i].c === c then true
-  else hits_snake(snake, r, c, i + 1)
+  else hits(snake, r, c, i + 1)
 }
 
-let copy_range = fn(src, dst, i, end) {
-  let go = fn() { push(dst, src[i]); copy_range(src, dst, i + 1, end) }
-  if i >= end then nil else go()
+let opposite = fn(a, b) {
+  (a === 0 and b === 2) or (a === 2 and b === 0)
+  or (a === 1 and b === 3) or (a === 3 and b === 1)
 }
 
-let valid_dir = fn(nd, od) {
-  if nd === 0 and od === 2 then false
-  else if nd === 2 and od === 0 then false
-  else if nd === 1 and od === 3 then false
-  else if nd === 3 and od === 1 then false
-  else true
-}
-
-let key_to_dir = fn(key) {
-  if key === 119 or key === 256 then 0
-  else if key === 100 or key === 257 then 1
-  else if key === 115 or key === 258 then 2
-  else if key === 97 or key === 259 then 3
-  else -1
-}
-
-// --- Food generation ---
-
-let gen_food = fn(snake, r, c, tries) {
-  let nr = wrap(r + 7, 18) + 1
-  let nc = wrap(c + 13, 38) + 1
-  if tries > 100 then {r: 5, c: 5}
-  else if hits_snake(snake, nr, nc, 0) then gen_food(snake, nr, nc, tries + 1)
-  else {r: nr, c: nc}
-}
-
-// --- Game logic (updates signals) ---
-
-let build_new_snake = fn(old, new_head, ate) {
-  let result = []
-  let _ = push(result, new_head)
-  let end = if ate then len(old) else len(old) - 1
-  let _ = copy_range(old, result, 0, end)
-  result
-}
-
-let tick = fn() {
-  let head = $snake[0]
-  let nr = head.r + dr($dir)
-  let nc = head.c + dc($dir)
-
-  let wall = nr <= 0 or nr >= ROWS - 1 or nc <= 0 or nc >= COLS - 1
-  let self_hit = hits_snake($snake, nr, nc, 1)
-  let ate = nr === $food.r and nc === $food.c
-
-  let die = fn() { $alive = false }
-  let eat = fn(new_snake) {
-    $score = $score + 1
-    $food = gen_food(new_snake, nr, nc, 0)
-  }
-  let live = fn() {
-    let new_head = {r: nr, c: nc}
-    let new_snake = build_new_snake($snake, new_head, ate)
-    $snake = new_snake
-    if ate then eat(new_snake) else nil
-  }
-  if wall or self_hit then die() else live()
-}
-
-let process_input = fn(key) {
-  let do_move = fn() {
-    let nd = key_to_dir(key)
-    let cur = $dir
-    if nd === -1 then nil
-    else if valid_dir(nd, cur) then $dir = nd
-    else nil
-  }
-  if key === 113 then $alive = false
-  else do_move()
-}
-
-// --- Rendering (reads signals) ---
-
-let cell_char = fn(r, c, snake, food) {
-  if r === 0 or r === ROWS - 1 then "█"
-  else if c === 0 or c === COLS - 1 then "█"
-  else if snake[0].r === r and snake[0].c === c then "█"
-  else if hits_snake(snake, r, c, 1) then "▓"
-  else if food.r === r and food.c === c then "◆"
-  else "░"
-}
-
-let build_row = fn(r, c, snake, food) {
-  if c >= COLS then ""
-  else cell_char(r, c, snake, food) + build_row(r, c + 1, snake, food)
-}
-
-let render_rows = fn(r, snake, food) {
-  let row = build_row(r, 0, snake, food)
-  let rest = if r + 1 >= ROWS then "" else "\r\n" + render_rows(r + 1, snake, food)
-  row + rest
-}
-
-let render = fn() {
-  let frame = render_rows(0, $snake, $food)
-  term_move(1, 1)
-  term_write(frame)
-  term_move(ROWS + 1, 1)
-  term_color(11)
-  term_write($status_sig)
-  term_reset_color()
-}
-
-// --- Game loop ---
-
-let FRAME_MS = 100
-
-let wait_for_quit = fn(ms_left) {
-  let retry = fn() { term_sleep(10); wait_for_quit(ms_left - 10) }
-  if ms_left <= 0 then false
-  else if term_read_key() === 113 then true
-  else retry()
-}
-
-let game_loop = fn() {
-  let t0 = term_ticks()
-  render()
-  let elapsed = term_ticks() - t0
-  let remain = FRAME_MS - elapsed
-  if remain > 0 then term_sleep(remain) else nil
-  let key = term_read_key()
-  let _ = process_input(key)
-
-  if $alive then tick() else nil
-
-  if $alive then
-    game_loop()
-  else {
-    render()
-    term_move(ROWS + 1, 1)
-    term_color(9)
-    term_write("Game Over! Press q to quit, or wait to restart...")
-    term_reset_color()
-    if wait_for_quit(3000) then nil
-    else {
-      $snake = [{r: 10, c: 20}, {r: 10, c: 19}, {r: 10, c: 18}]
-      $dir = 1
-      $food = {r: 5, c: 15}
-      $score = 0
-      $alive = true
-      game_loop()
+let key_to_dir = fn(k) {
+  match k.code {
+    UP    -> 0
+    RIGHT -> 1
+    DOWN  -> 2
+    LEFT  -> 3
+    _     -> match k.rune {
+      "w" -> 0  "d" -> 1  "s" -> 2  "a" -> 3  _ -> -1
     }
   }
 }
 
-// --- Main ---
+// Pseudo-random free cell for the next food.
+let gen_food = fn(snake, seed, tries) {
+  let nr = ((seed * 7) % (ROWS - 2)) + 1
+  let nc = ((seed * 13) % (COLS - 2)) + 1
+  if tries > 64 then {r: 1, c: 1}
+  else if hits(snake, nr, nc, 0) then gen_food(snake, seed + 1, tries + 1)
+  else {r: nr, c: nc}
+}
 
-term_raw()
-term_hide_cursor()
-term_clear()
+// ── Logic: mutate the signals ──────────────────────────────────────
 
-game_loop()
+let grow = fn(head, body, ate) {
+  let next = [head]
+  let keep = if ate then len(body) else len(body) - 1
+  let copy = fn(i) { if i >= keep then nil else { push(next, body[i]); copy(i + 1) } }
+  copy(0)
+  next
+}
 
-term_show_cursor()
-term_restore()
-term_move(ROWS + 3, 1)
-term_color(9)
-term_write("Game Over! ")
-term_color(11)
-term_write("Final score: ", $score)
-term_reset_color()
-print("")
+let step = fn() {
+  let head = $snake[0]
+  let nr = head.r + dr($dir)
+  let nc = head.c + dc($dir)
+  let wall = nr <= 0 or nr >= ROWS - 1 or nc <= 0 or nc >= COLS - 1
+  let ate = nr === $food.r and nc === $food.c
+
+  if wall or hits($snake, nr, nc, 1) then $alive = false
+  else {
+    let next = grow({r: nr, c: nc}, $snake, ate)
+    $snake = next
+    if ate then { $score = $score + 1; $food = gen_food(next, nr + nc, 0) } else nil
+  }
+}
+
+let turn = fn(k) {
+  let nd = key_to_dir(k)
+  if nd === -1 or opposite(nd, $dir) then nil else $dir = nd
+}
+
+let reset = fn() {
+  $snake = [{r: 9, c: 18}, {r: 9, c: 17}, {r: 9, c: 16}]
+  $dir = 1
+  $food = {r: 5, c: 13}
+  $score = 0
+  $alive = true
+}
+
+// ── milktea model ──────────────────────────────────────────────────
+
+// State is a plain marker. milktea re-renders every tick and the view reads the
+// signals directly, so update just mutates signals and hands the state back.
+let state = nil
+
+fn update(state, msg) {
+  match msg {
+    Tick(_) -> if $alive then step() else nil
+    Key(k)  -> match k.rune { "r" -> reset()  _ -> if $alive then turn(k) else nil }
+    _       -> nil
+  }
+  state
+}
+
+// ── View: read the signals, build rows of text ─────────────────────
+
+let cell = fn(r, c, snake, food) {
+  if r === 0 or r === ROWS - 1 or c === 0 or c === COLS - 1 then "█"
+  else if snake[0].r === r and snake[0].c === c then "▓"
+  else if hits(snake, r, c, 1) then "▒"
+  else if food.r === r and food.c === c then "◆"
+  else " "
+}
+
+let row_str = fn(r, c, snake, food) {
+  if c >= COLS then "" else cell(r, c, snake, food) + row_str(r, c + 1, snake, food)
+}
+
+// One <Text> per row, built from the current snake and food positions.
+let build_rows = fn(acc, r, snake, food) {
+  if r >= ROWS then acc
+  else {
+    push(acc, <Text value=row_str(r, 0, snake, food) fg="#00d7ff" />)
+    build_rows(acc, r + 1, snake, food)
+  }
+}
+
+fn view(state) {
+  let rows = build_rows([], 0, $snake, $food)
+  let status =
+    if $alive then "Score: " + num_to_str($score) + "   arrows to steer, q quit"
+    else "GAME OVER, score " + num_to_str($score) + "   r to restart, q quit"
+
+  let status_row = <Text value=status bold=true dim=(!$alive) />
+
+  <Box border="rounded" fg="#00d7ff" padding_x=1>
+    <VStack gap=0>
+      rows
+      status_row
+    </VStack>
+  </Box>
+}
+
+run({ state, update, view })

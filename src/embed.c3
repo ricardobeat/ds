@@ -192,6 +192,20 @@ fn void engine_begin_render() {
     g_element_slot = 0;
 }
 
+// engine_reset_render_cache discards the element memoization table, forcing every
+// component to re-run on the next render pass. Hosts that re-render the whole view
+// every frame (e.g. on a timer tick) should call this instead of relying on the
+// fingerprint cache: a component that reads a signal directly, without that signal
+// flowing through its props/children, would otherwise serve a stale cached result.
+// This keeps the engine's memoization intact for on-demand hosts while letting a
+// render-every-frame host opt out of it.
+fn void engine_reset_render_cache() {
+    for (int i = 0; i < g_element_slot; i++) {
+        g_element_slots[i].used = false;
+    }
+    g_element_slot = 0;
+}
+
 // Allocation tracking — count heap Array/Record allocations across render passes.
 fn void engine_alloc_reset() {
     g_alloc_arrays = 0;

@@ -1,7 +1,7 @@
 # Build targets
 default: build
 
-fmt:
+format:
   c3fmt --in-place .
 
 build:
@@ -29,6 +29,10 @@ bench: build
 # Build and run the todo TUI app (DS-scripted)
 todo:
   c3c build ds && ./build/ds example/todo/todo.ds
+
+# Build and run the snake game (DS-scripted, milktea-rendered)
+snake:
+  c3c build ds && ./build/ds examples/snake.ds
 
 # Build the ds-run host binary
 build-ds:
