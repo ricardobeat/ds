@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>new-engine</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav>
+    <span class="brand">new-engine</span>
+    <a href="index.html" aria-current="page">Overview</a>
+    <a href="examples.html">Examples</a>
+  </nav>
+
+  <main>
+    <h1>new-engine</h1>
+    <p class="lede">A small interpreter for a JS-shaped language, written in C3 0.8.0. The language is informally called DS, and its source files use the <code>.ds</code> extension.</p>
+
+    <h2>What it is</h2>
+    <p>new-engine is a tree-walking interpreter built over a kernel of about twelve AST nodes. Every surface feature, including <code>let</code>, sequencing, binary operators, method calls, type annotations, and sum types with <code>match</code>, desugars into that kernel before evaluation. The kernel stays small, and the language grows by adding desugarings rather than evaluator cases.</p>
+
+    <h2>Syntax</h2>
+    <p>The syntax is JS-shaped. There are <code>let</code> bindings, records, arrays, functions, conditional expressions, and exceptions.</p>
+    <pre><code class="language-javascript">let greet = fn(name) {
+  "Hello, " + name
+}
+
+let user = { name: "Alice", age: 30 }
+let nums = [1, 2, 3]
+
+let msg = if user.age > 18 then "adult" else "minor"
+
+try {
+  throw "boom"
+} catch e {
+  "caught: " + e
+}</code></pre>
+
+    <h2>Pattern matching</h2>
+    <p>Tagged sum types are matched with <code>match</code>. A <code>_</code> arm acts as a wildcard.</p>
+    <pre><code class="language-javascript">let handle = fn(msg) {
+  match msg {
+    Key(k) -> "pressed " + k
+    Tick   -> "tick"
+    _      -> "ignored"
+  }
+}</code></pre>
+
+    <h2>Reactive signals</h2>
+    <p>A <code>$</code>-prefixed binding is a mutable reactive cell. <code>let $x = 0</code> creates a signal, <code>$x</code> reads it, and <code>$x = e</code> sets it. <code>derived</code> builds a value that tracks its dependencies, and <code>effect</code> runs when they change.</p>
+    <pre><code class="language-javascript">let $count = 0
+let doubled = derived(fn() { $count * 2 })
+
+effect(fn() {
+  print("count is " + $count)
+})
+
+$count = $count + 1</code></pre>
+
+    <h2>Elements and TUIs</h2>
+    <p>JSX-like elements compile to a referentially-stable element tree. The tree is used to build terminal user interfaces, with <code>&lt;VStack&gt;</code> and <code>&lt;HStack&gt;</code> for layout.</p>
+    <pre><code class="language-javascript">let view = fn() {
+  &lt;Box border="rounded"&gt;
+    &lt;VStack&gt;
+      &lt;Text value="hi" /&gt;
+      &lt;Text value="there" /&gt;
+    &lt;/VStack&gt;
+  &lt;/Box&gt;
+}</code></pre>
+
+    <h2>milktea</h2>
+    <p>new-engine ships with milktea, an Elm-Architecture TUI framework. A model is a record of <code>{ state, update, view }</code>, and you hand it to <code>run</code>. The xray layer performs differential terminal rendering, so only changed cells are redrawn.</p>
+    <pre><code class="language-javascript">let app = {
+  state: { count: 0 },
+
+  update: fn(state, msg) {
+    match msg {
+      Inc -> { count: state.count + 1 }
+      _   -> state
+    }
+  },
+
+  view: fn(state) {
+    &lt;Box border="rounded"&gt;
+      &lt;Text value="count: " + state.count /&gt;
+    &lt;/Box&gt;
+  }
+}
+
+run(app)</code></pre>
+
+    <h2>Quick start</h2>
+    <p>Build the interpreter with C3, then run or format a file.</p>
+    <pre><code class="language-bash">c3c build
+./build/engine run hello.ds
+./build/engine fmt hello.ds</code></pre>
+    <p>For milktea TUI apps there is a separate <code>ds</code> host target.</p>
+    <pre><code class="language-bash">c3c build ds
+./build/ds app.ds</code></pre>
+
+    <p class="footer">See the <a href="examples.html">examples</a> for longer programs.</p>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+  <script>hljs.highlightAll();</script>
+</body>
+</html>

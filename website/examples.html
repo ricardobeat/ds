@@ -1,0 +1,978 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Examples</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+</head>
+<body>
+  <nav>
+    <span class="brand">new-engine</span>
+    <a href="index.html">Overview</a>
+    <a href="examples.html" aria-current="page">Examples</a>
+  </nav>
+
+  <main>
+    <h1>Examples</h1>
+
+    <p>
+      These are the example programs that ship with the project. Most are small
+      milktea TUI apps, each a self-contained model, update, and view triple.
+      This page is generated from the files in <code>examples/</code> by
+      <code>just website</code>, so it always matches the source.
+    </p>
+
+    <ul>
+      <li><a href="#counter.ds">counter.ds</a></li>
+      <li><a href="#spinner.ds">spinner.ds</a></li>
+      <li><a href="#timer.ds">timer.ds</a></li>
+      <li><a href="#progress.ds">progress.ds</a></li>
+      <li><a href="#tabs.ds">tabs.ds</a></li>
+      <li><a href="#repl.ds">repl.ds</a></li>
+      <li><a href="#todo.ds">todo.ds</a></li>
+      <li><a href="#snake.ds">snake.ds</a></li>
+      <li><a href="#raylib_demo.ds">raylib_demo.ds</a></li>
+    </ul>
+
+    <h2 id="counter.ds">counter.ds</h2>
+    <p>A simple counter TUI: up and down to change a number.</p>
+    <pre><code class="language-javascript ds">// counter.ds — Simple counter TUI app
+// Controls: ↑ to increment, ↓ to decrement, q to quit
+
+from milktea import { run }
+from keys import { UP, DOWN }
+
+// ── Helpers ────────────────────────────────────────────────────────
+
+let clamp_val = fn(v, lo, hi) {
+  if v &lt; lo then lo else if v &gt; hi then hi else v
+}
+
+// ── Model ──────────────────────────────────────────────────────────
+
+let state = { value: 0 }
+
+fn update(state, msg) {
+  match msg {
+    Key(k) -&gt;
+      match k.code {
+        UP   -&gt; { ...state, value: state.value + 1 }
+        DOWN -&gt; { ...state, value: state.value - 1 }
+        _      -&gt;
+          match k.rune {
+            "q" -&gt; { ...state, quit: true }
+            _   -&gt; state
+          }
+      }
+    _ -&gt; state
+  }
+}
+
+fn view(state) {
+  let label = "Counter: " + num_to_str(state.value)
+
+  &lt;Box border="rounded" fg="#00d7ff" bold=true padding_x=3 padding_y=1&gt;
+    &lt;VStack gap=1&gt;
+      &lt;Text value=label bold=true /&gt;
+      &lt;Text value="Use ↑↓ to change, q to quit" dim=true /&gt;
+    &lt;/VStack&gt;
+  &lt;/Box&gt;
+}
+
+// ── Run ────────────────────────────────────────────────────────────
+
+run({ state, update, view })
+</code></pre>
+
+    <h2 id="spinner.ds">spinner.ds</h2>
+    <p>An animated braille spinner.</p>
+    <pre><code class="language-javascript ds">// spinner.ds — animated braille spinner TUI app
+
+from milktea import { run }
+
+// ── Spinner frames ────────────────────────────────────────────────
+
+let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+// ── Model ─────────────────────────────────────────────────────────
+
+let state = { frame: 0 }
+
+fn update(state, msg) {
+  match msg {
+    Key(k) -&gt;
+      match k.rune {
+        "q" -&gt; { ...state, quit: true }
+        _   -&gt; state
+      }
+    Tick(_)        -&gt; { ...state, frame: (state.frame + 1) % len(frames) }
+    _ -&gt; state
+  }
+}
+
+fn view(state) {
+  let spin = frames[state.frame]
+  let title = spin + "  Loading..."
+
+  &lt;VStack gap=1&gt;
+    &lt;Text bold=true fg="#00d7ff" value=title /&gt;
+    &lt;Text dim=true value="Press q to quit" /&gt;
+  &lt;/VStack&gt;
+}
+
+// ── Run ──────────────────────────────────────────────────────────
+
+run({ state, update, view })
+</code></pre>
+
+    <h2 id="timer.ds">timer.ds</h2>
+    <p>A countdown timer with pause, resume, and reset.</p>
+    <pre><code class="language-javascript ds">// timer.ds — countdown timer TUI app
+// Controls: space=pause/resume, r=reset, q=quit
+
+from milktea import { run }
+
+// ── State ────────────────────────────────────────────────────────
+
+let state = { total: 60, remaining: 60, running: true, done: false }
+
+// ── Helpers ──────────────────────────────────────────────────────
+
+let format_time = fn(seconds) {
+  let mins = floor(seconds / 60)
+  let secs = floor(seconds % 60)
+  str_pad_left(num_to_str(mins), 2, "0") + ":" + str_pad_left(num_to_str(secs), 2, "0")
+}
+
+// ── Model ────────────────────────────────────────────────────────
+
+fn update(state, msg) {
+  match msg {
+    Key(k) -&gt;
+      match k.rune {
+        " " -&gt; if state.done then state
+               else { ...state, running: !state.running }
+        "r" -&gt; { ...state, remaining: state.total, running: true, done: false }
+        "q" -&gt; { ...state, quit: true }
+        _   -&gt; state
+      }
+    Tick(_) -&gt;
+      if state.running and state.done === false then {
+        let next = state.remaining - 1
+        if next &lt;= 0
+          then { ...state, remaining: 0, done: true, running: false }
+          else { ...state, remaining: next }
+      } else state
+    _ -&gt; state
+  }
+}
+
+// ── View ─────────────────────────────────────────────────────────
+
+fn view(state) {
+  let time_str = format_time(state.remaining)
+
+  let timer_box =
+    &lt;Box border="rounded" fg="#ff00ff" bold=true padding_x=4 padding_y=2&gt;
+      &lt;Text value=time_str /&gt;
+    &lt;/Box&gt;
+
+  let status =
+    if state.done then
+      &lt;Text bold=true fg="#00ff88" value="Time's up!  ·  r to reset  ·  q to quit" /&gt;
+    else if state.running then
+      &lt;Text dim=true value="SPACE to pause  ·  r reset  ·  q quit" /&gt;
+    else
+      &lt;Text fg="#ffff00" value="PAUSED  ·  SPACE to resume  ·  r reset  ·  q quit" /&gt;
+
+  &lt;VStack gap=2&gt;
+    timer_box
+    status
+  &lt;/VStack&gt;
+}
+
+// ── Run ──────────────────────────────────────────────────────────
+
+run({ state, update, view })
+</code></pre>
+
+    <h2 id="progress.ds">progress.ds</h2>
+    <p>Three animated progress bars at adjustable speed.</p>
+    <pre><code class="language-javascript ds">// progress.ds — three animated progress bars
+// Controls: f=fast, s=slow, r=restart, q=quit
+
+from milktea import { run }
+
+// ── State ────────────────────────────────────────────────────────
+
+let state = { pct: 0, speed: 1, done: false }
+
+// ── Helpers ──────────────────────────────────────────────────────
+
+let bar = fn(pct, fill, empty, color) {
+  progress_bar({ width: 38, pct: pct, fill: fill, empty: empty, fill_color: color, empty_color: "" })
+}
+
+// ── Model ────────────────────────────────────────────────────────
+
+fn update(state, msg) {
+  match msg {
+    Key(k) -&gt;
+      match k.rune {
+        "f" -&gt; { ...state, speed: 5 }
+        "s" -&gt; { ...state, speed: 1 }
+        "r" -&gt; { ...state, pct: 0, done: false, speed: 1 }
+        "q" -&gt; { ...state, quit: true }
+        _   -&gt; state
+      }
+    Tick(_) -&gt;
+      if state.done then state
+      else {
+        let new_pct = state.pct + state.speed
+        if new_pct &gt;= 100
+          then { ...state, pct: 100, done: true }
+          else { ...state, pct: new_pct }
+      }
+    _ -&gt; state
+  }
+}
+
+// ── View ─────────────────────────────────────────────────────────
+
+fn view(state) {
+  let pct = state.pct
+  let pct_str = num_to_str(pct) + "%"
+
+  let body =
+    if state.done then
+      &lt;VStack gap=1&gt;
+        &lt;Text bold=true fg="#00ff88" value="✓ Complete!" /&gt;
+        &lt;Text dim=true value="r to restart  ·  q to quit" /&gt;
+      &lt;/VStack&gt;
+    else
+      &lt;VStack gap=1&gt;
+        &lt;HStack gap=1&gt;
+          &lt;Text value=" Download " /&gt;
+          &lt;Text value=bar(pct, "█", "░", "#00d7ff") /&gt;
+        &lt;/HStack&gt;
+        &lt;HStack gap=1&gt;
+          &lt;Text value=" Compile  " /&gt;
+          &lt;Text value=bar(pct, "■", "□", "#ff00ff") /&gt;
+        &lt;/HStack&gt;
+        &lt;HStack gap=1&gt;
+          &lt;Text value=" Deploy   " /&gt;
+          &lt;Text value=bar(pct, "=", "-", "#00ff88") /&gt;
+        &lt;/HStack&gt;
+        &lt;Text value="" /&gt;
+        &lt;Text bold=true value=pct_str /&gt;
+        &lt;Text dim=true value="f fast  ·  s slow  ·  r restart  ·  q quit" /&gt;
+      &lt;/VStack&gt;
+
+  &lt;Box border="rounded" pt=1 pb=1 pl=2 pr=2&gt;
+    body
+  &lt;/Box&gt;
+}
+
+// ── Run ──────────────────────────────────────────────────────────
+
+run({ state, update, view })
+</code></pre>
+
+    <h2 id="tabs.ds">tabs.ds</h2>
+    <p>Tab navigation between three panes.</p>
+    <pre><code class="language-javascript ds">// tabs.ds — Tab navigation TUI app
+// Controls: ← → or h/l to switch tabs, q to quit
+
+from milktea import { run }
+from keys import { LEFT, RIGHT }
+
+// ── Tab data ────────────────────────────────────────────────────────
+
+let tab_names = ["Home", "About", "Settings"]
+
+let tab_contents = [
+  "Welcome to milktea!\n\nA Bubble Tea-inspired TUI framework.\nUse ← → or h/l to switch tabs.",
+  "milktea  event loop and TTY management\nglaze    styling and layout\nboba     reusable widgets",
+  "Theme     Default\nBorder    Rounded\nColors    True color"
+]
+
+// ── Pure update helpers ────────────────────────────────────────────
+
+let clamp = fn(v, lo, hi) {
+  if v &lt; lo then lo
+  else if v &gt; hi then hi
+  else v
+}
+
+// ── Model ──────────────────────────────────────────────────────────
+
+let state = { tab: 0 }
+
+fn update(state, msg) {
+  match msg {
+    Key(k) -&gt;
+      match k.code {
+        LEFT -&gt;
+          { ...state, tab: clamp(state.tab - 1, 0, len(tab_names) - 1) }
+        RIGHT -&gt;
+          { ...state, tab: clamp(state.tab + 1, 0, len(tab_names) - 1) }
+        _ -&gt;
+          match k.rune {
+            "h" -&gt; { ...state, tab: clamp(state.tab - 1, 0, len(tab_names) - 1) }
+            "l" -&gt; { ...state, tab: clamp(state.tab + 1, 0, len(tab_names) - 1) }
+            "q" -&gt; { ...state, quit: true }
+            _   -&gt; state
+          }
+      }
+    _ -&gt; state
+  }
+}
+
+// ── View ───────────────────────────────────────────────────────────
+
+let render_tab_item = fn(name, idx, active_tab) {
+  let active = idx === active_tab
+  let bg = if active then "#874bfc" else "none"
+  let fg = if active then "#ffffff" else "#626262"
+  let bold_attr = if active then true else false
+  let dim_attr = if active then false else true
+  let border_fg = if active then "#874bfc" else "#3c3c3c"
+
+  &lt;Box
+    border="rounded"
+    border_fg=border_fg
+    bg=bg
+    fg=fg
+    bold=bold_attr
+    dim=dim_attr
+    padding_x=1
+    padding_y=0
+  &gt;
+    &lt;Text value=name /&gt;
+  &lt;/Box&gt;
+}
+
+fn view(state) {
+  let tab_items = map(tab_names, fn(name, idx) {
+    render_tab_item(name, idx, state.tab)
+  })
+
+  let tab_bar = &lt;HStack gap=0&gt;
+    tab_items
+  &lt;/HStack&gt;
+
+  let content = tab_contents[state.tab]
+
+  let content_box = &lt;Box
+    border="rounded"
+    border_fg="#874bfc"
+    padding_x=2
+    padding_y=1
+    width=50
+    height=8
+  &gt;
+    &lt;Text value=content /&gt;
+  &lt;/Box&gt;
+
+  let hint = "  ← → / h l  switch tabs    q  quit"
+
+  &lt;VStack gap=1&gt;
+    &lt;Text value="" /&gt;
+    tab_bar
+    &lt;Text value="" /&gt;
+    content_box
+    &lt;Text value="" /&gt;
+    &lt;Text value=hint dim=true /&gt;
+  &lt;/VStack&gt;
+}
+
+// ── Run ────────────────────────────────────────────────────────────
+
+run({ state, update, view })
+</code></pre>
+
+    <h2 id="repl.ds">repl.ds</h2>
+    <p>An interactive line-entry box, REPL style.</p>
+    <pre><code class="language-javascript ds">// repl.ds — Interactive line-entry app (inputbox-style)
+// Type characters, Enter submits, Backspace deletes, q (empty) quits
+
+from milktea import { run }
+from keys import { ENTER, BACKSPACE, RUNE }
+
+// ── State ─────────────────────────────────────────────────────────
+
+let state = {
+  input:   "",
+  history: ["Welcome to DS REPL.", "Type something and press Enter.", "q (when empty) to quit."]
+}
+
+// ── Model ─────────────────────────────────────────────────────────
+
+fn update(state, msg) {
+  match msg {
+    Key(k) -&gt;
+      match k.code {
+        ENTER -&gt;
+          if string_width(state.input) &gt; 0 then {
+            let h = push(state.history, "&gt; " + state.input)
+            { ...state, input: "", history: h }
+          } else state
+
+        BACKSPACE -&gt; {
+          let l = string_width(state.input)
+          let new_input = if l &gt; 0 then str_slice(state.input, 0, l - 1) else ""
+          { ...state, input: new_input }
+        }
+
+        RUNE -&gt;
+          if string_width(state.input) === 0 and k.rune === "q"
+            then { ...state, quit: true }
+            else { ...state, input: state.input + k.rune }
+
+        _ -&gt; state
+      }
+    _ -&gt; state
+  }
+}
+
+// ── View ──────────────────────────────────────────────────────────
+
+let render_line = fn(text, _selected) { text }
+
+fn view(state) {
+  let header =
+    &lt;VStack gap=0&gt;
+      &lt;Text bold=true fg="#00ffcc" value="  DS REPL" /&gt;
+      &lt;Divider width=state.width /&gt;
+    &lt;/VStack&gt;
+
+  let no_cursor = 0 - 1
+  let history_view =
+    &lt;List items=state.history cursor=no_cursor render_item=render_line /&gt;
+
+  let input_area =
+    &lt;Box border="rounded" fg="#ffff00" padding_x=1&gt;
+      &lt;TextInput prefix="&gt; " value=state.input focused=true /&gt;
+    &lt;/Box&gt;
+
+  let hint =
+    &lt;Text dim=true value="  Enter to submit  ·  q (empty input) to quit" /&gt;
+
+  &lt;VStack gap=1&gt;
+    header
+    history_view
+    input_area
+    hint
+  &lt;/VStack&gt;
+}
+
+// ── Run ──────────────────────────────────────────────────────────
+
+run({ state, update, view })
+</code></pre>
+
+    <h2 id="todo.ds">todo.ds</h2>
+    <p>A todo app built from JSX components.</p>
+    <pre><code class="language-javascript ds">// todo.ds — todo app built entirely in DS with JSX components
+
+from milktea import { run }
+from keys import { ENTER, BACKSPACE, ESC, UP, DOWN, RUNE, CTRL_C, DELETE }
+
+// ── Animation ──────────────────────────────────────────────────────
+
+let star_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+let $star_frame = 0
+
+// ── App state ──────────────────────────────────────────────────────
+
+let MODE_LIST = "list"
+let MODE_ADD  = "add"
+
+let state = {
+  todos:  [
+    { text: "Buy milk",           done: false },
+    { text: "Write more DS code", done: false },
+    { text: "Ship it",            done: false }
+  ],
+  cursor: 0,
+  mode:   MODE_LIST,
+  input:  ""
+}
+
+// ── Pure update helpers ────────────────────────────────────────────
+
+let clamp = fn(v, lo, hi) {
+  if v &lt; lo then lo
+  else if v &gt; hi then hi
+  else v
+}
+
+let toggle_done = fn(item) {
+  { ...item, done: !item.done }
+}
+
+let map_todos = fn(todos, i, f) {
+  map(todos, fn(item, j) { if j === i then f(item) else item })
+}
+
+let remove_at = fn(todos, idx) {
+  filteri(todos, fn(item, j) { j !== idx })
+}
+
+// ── Model ──────────────────────────────────────────────────────────
+
+fn update_list(state, k) {
+  let n = len(state.todos)
+  match k.rune {
+    " " -&gt; { ...state, todos: map_todos(state.todos, state.cursor, toggle_done) }
+    "a" -&gt; { ...state, mode: MODE_ADD, input: "" }
+    "d" -&gt; {
+             let todos  = remove_at(state.todos, state.cursor)
+             let cursor = clamp(state.cursor, 0, len(todos) - 1)
+             { ...state, todos: todos, cursor: cursor }
+           }
+    _ -&gt;
+      match k.code {
+        UP -&gt; { ...state, cursor: clamp(state.cursor - 1, 0, n - 1) }
+        DOWN -&gt; { ...state, cursor: clamp(state.cursor + 1, 0, n - 1) }
+        _  -&gt; state
+      }
+  }
+}
+
+fn update_add(state, k) {
+  match k.code {
+    ESC       -&gt; { ...state, mode: MODE_LIST, input: "" }
+    ENTER     -&gt; if string_width(state.input) &gt; 0 then {
+                   let todos = push(state.todos, { text: state.input, done: false })
+                   { ...state, todos: todos, cursor: len(todos) - 1, mode: MODE_LIST, input: "" }
+                 } else state
+    BACKSPACE -&gt; {
+                   let l = string_width(state.input)
+                   let s = if l &gt; 0 then str_slice(state.input, 0, l - 1) else state.input
+                   { ...state, input: s }
+                 }
+    RUNE      -&gt; { ...state, input: state.input + k.rune }
+    _         -&gt; state
+  }
+}
+
+fn update(state, msg) {
+  match msg {
+    Key(k)         -&gt; if state.mode === MODE_LIST then update_list(state, k)
+                      else if state.mode === MODE_ADD then update_add(state, k)
+                      else state
+    _ -&gt; state
+                       $star_frame = ($star_frame + 1) % len(star_frames);
+                       state
+                     }
+    None(_)        -&gt; state
+  }
+}
+
+// ── View ───────────────────────────────────────────────────────────
+
+let render_todo = fn(item, selected) {
+  if item.done
+    then "✓ " + item.text
+    else "○ " + item.text
+}
+
+let Star = fn(p) {
+  &lt;Text value=p.char dim=true /&gt;
+}
+
+let view = fn(state) {
+  let star = star_frames[$star_frame]
+
+  let header =
+    &lt;VStack gap=1&gt;
+      &lt;Text bold=true value="  ✓ Todo" /&gt;
+      &lt;Divider width=state.width /&gt;
+    &lt;/VStack&gt;
+
+  let add_view =
+    &lt;VStack gap=1&gt;
+      &lt;Text bold=true value="  New todo" /&gt;
+      &lt;TextInput prefix="  &gt; " value=state.input focused=true /&gt;
+      &lt;HStack gap=0 width=state.width constraints=["fill", "len:1"]&gt;
+        &lt;StatusBar text="  Enter to add  ·  ESC to cancel" /&gt;
+        &lt;Star char=star /&gt;
+      &lt;/HStack&gt;
+    &lt;/VStack&gt;
+
+  let list_view =
+    &lt;VStack gap=1&gt;
+      &lt;List items=state.todos cursor=state.cursor render_item=render_todo /&gt;
+      &lt;HStack gap=0 width=state.width constraints=["fill", "len:1"]&gt;
+        &lt;StatusBar text="  ↑↓ move  ·  space toggle  ·  a add  ·  d delete  ·  q quit" /&gt;
+        &lt;Star char=star /&gt;
+      &lt;/HStack&gt;
+    &lt;/VStack&gt;
+
+  &lt;VStack gap=1&gt;
+    header
+    if state.mode === MODE_ADD then add_view
+    else list_view
+  &lt;/VStack&gt;
+}
+
+// ── Run ────────────────────────────────────────────────────────────
+
+run({ state, update, view })
+</code></pre>
+
+    <h2 id="snake.ds">snake.ds</h2>
+    <p>Terminal snake. Game state lives in reactive $-signals.</p>
+    <pre><code class="language-javascript ds">// snake.ds — Terminal snake, rendered with milktea
+//
+// Run:      ./build/ds examples/snake.ds   (or ./build/todo examples/snake.ds)
+// Controls: arrow keys or w/a/s/d to steer, q to quit
+//
+// The game state lives in $-signals (mutable reactive cells); milktea owns
+// the loop and rendering. `update` mutates the signals on each Tick/Key; `view`
+// reads them. The milktea host re-renders every frame, so the returned state is
+// just a marker and doesn't need to carry the game data.
+
+from milktea import { run }
+from keys import { UP, DOWN, LEFT, RIGHT }
+
+let ROWS = 18
+let COLS = 36
+
+// ── Game state as signals ──────────────────────────────────────────
+
+let $snake = [{r: 9, c: 18}, {r: 9, c: 17}, {r: 9, c: 16}]
+let $dir   = 1    // 0 up, 1 right, 2 down, 3 left
+let $food  = {r: 5, c: 13}
+let $score = 0
+let $alive = true
+
+// ── Helpers ────────────────────────────────────────────────────────
+
+let dr = fn(d) { if d === 0 then -1 else if d === 2 then 1 else 0 }
+let dc = fn(d) { if d === 3 then -1 else if d === 1 then 1 else 0 }
+
+let hits = fn(snake, r, c, i) {
+  if i &gt;= len(snake) then false
+  else if snake[i].r === r and snake[i].c === c then true
+  else hits(snake, r, c, i + 1)
+}
+
+let opposite = fn(a, b) {
+  (a === 0 and b === 2) or (a === 2 and b === 0)
+  or (a === 1 and b === 3) or (a === 3 and b === 1)
+}
+
+let key_to_dir = fn(k) {
+  match k.code {
+    UP    -&gt; 0
+    RIGHT -&gt; 1
+    DOWN  -&gt; 2
+    LEFT  -&gt; 3
+    _     -&gt; match k.rune {
+      "w" -&gt; 0  "d" -&gt; 1  "s" -&gt; 2  "a" -&gt; 3  _ -&gt; -1
+    }
+  }
+}
+
+// Pseudo-random free cell for the next food.
+let gen_food = fn(snake, seed, tries) {
+  let nr = ((seed * 7) % (ROWS - 2)) + 1
+  let nc = ((seed * 13) % (COLS - 2)) + 1
+  if tries &gt; 64 then {r: 1, c: 1}
+  else if hits(snake, nr, nc, 0) then gen_food(snake, seed + 1, tries + 1)
+  else {r: nr, c: nc}
+}
+
+// ── Logic: mutate the signals ──────────────────────────────────────
+
+let grow = fn(head, body, ate) {
+  let next = [head]
+  let keep = if ate then len(body) else len(body) - 1
+  let copy = fn(i) { if i &gt;= keep then nil else { push(next, body[i]); copy(i + 1) } }
+  copy(0)
+  next
+}
+
+let step = fn() {
+  let head = $snake[0]
+  let nr = head.r + dr($dir)
+  let nc = head.c + dc($dir)
+  let wall = nr &lt;= 0 or nr &gt;= ROWS - 1 or nc &lt;= 0 or nc &gt;= COLS - 1
+  let ate = nr === $food.r and nc === $food.c
+
+  if wall or hits($snake, nr, nc, 1) then $alive = false
+  else {
+    let next = grow({r: nr, c: nc}, $snake, ate)
+    $snake = next
+    if ate then { $score = $score + 1; $food = gen_food(next, nr + nc, 0) } else nil
+  }
+}
+
+let turn = fn(k) {
+  let nd = key_to_dir(k)
+  if nd === -1 or opposite(nd, $dir) then nil else $dir = nd
+}
+
+let reset = fn() {
+  $snake = [{r: 9, c: 18}, {r: 9, c: 17}, {r: 9, c: 16}]
+  $dir = 1
+  $food = {r: 5, c: 13}
+  $score = 0
+  $alive = true
+}
+
+// ── milktea model ──────────────────────────────────────────────────
+
+// State is a plain marker. milktea re-renders every tick and the view reads the
+// signals directly, so update just mutates signals and hands the state back.
+let state = nil
+
+fn update(state, msg) {
+  match msg {
+    Tick(_) -&gt; if $alive then step() else nil
+    Key(k)  -&gt; match k.rune { "r" -&gt; reset()  _ -&gt; if $alive then turn(k) else nil }
+    _       -&gt; nil
+  }
+  state
+}
+
+// ── View: read the signals, build rows of text ─────────────────────
+
+let cell = fn(r, c, snake, food) {
+  if r === 0 or r === ROWS - 1 or c === 0 or c === COLS - 1 then "█"
+  else if snake[0].r === r and snake[0].c === c then "▓"
+  else if hits(snake, r, c, 1) then "▒"
+  else if food.r === r and food.c === c then "◆"
+  else " "
+}
+
+let row_str = fn(r, c, snake, food) {
+  if c &gt;= COLS then "" else cell(r, c, snake, food) + row_str(r, c + 1, snake, food)
+}
+
+// One &lt;Text&gt; per row, built from the current snake and food positions.
+let build_rows = fn(acc, r, snake, food) {
+  if r &gt;= ROWS then acc
+  else {
+    push(acc, &lt;Text value=row_str(r, 0, snake, food) fg="#00d7ff" /&gt;)
+    build_rows(acc, r + 1, snake, food)
+  }
+}
+
+fn view(state) {
+  let rows = build_rows([], 0, $snake, $food)
+  let status =
+    if $alive then "Score: " + num_to_str($score) + "   arrows to steer, q quit"
+    else "GAME OVER, score " + num_to_str($score) + "   r to restart, q quit"
+
+  let status_row = &lt;Text value=status bold=true dim=(!$alive) /&gt;
+
+  &lt;Box border="rounded" fg="#00d7ff" padding_x=1&gt;
+    &lt;VStack gap=0&gt;
+      rows
+      status_row
+    &lt;/VStack&gt;
+  &lt;/Box&gt;
+}
+
+run({ state, update, view })
+</code></pre>
+
+    <h2 id="raylib_demo.ds">raylib_demo.ds</h2>
+    <p>A 3D demo driving the raylib plugin from DS, with a signal-backed camera.</p>
+    <pre><code class="language-javascript ds">// raylib_demo.ds — 3D demo using the raylib plugin
+//
+// Build plugin: cc -shared -o build/libraylib.dylib plugins/raylib/raylib.c \
+//               -I/opt/homebrew/include -L/opt/homebrew/lib -lraylib \
+//               -framework OpenGL -framework Cocoa -framework IOKit \
+//               -framework CoreAudio -framework CoreVideo
+// Run: ./build/engine run examples/raylib_demo.ds
+
+from "./build/libraylib" import *
+from signals import { signal }
+
+// -- Setup --
+rl_init_window(1280, 720, "DS + Raylib 3D Demo")
+rl_set_target_fps(60)
+
+// -- Camera state as signal (pos.xyz, target.xyz, up.xyz, fovy, projection) --
+let $cam = [10, 10, 10, 0, 0, 0, 0, 1, 0, 45, 0]
+
+// -- Key constants --
+let KEY_W = 87
+let KEY_S = 83
+let KEY_A = 65
+let KEY_D = 68
+let KEY_Q = 81
+let KEY_E = 69
+let KEY_RIGHT = 262
+let KEY_LEFT  = 263
+let KEY_DOWN  = 264
+let KEY_UP    = 265
+
+// -- Simple math --
+let sin_approx = fn(x) {
+  let pi = 3.14159265358979
+  let two_pi = pi * 2
+  let reduce = fn(v) { if v &gt; two_pi then reduce(v - two_pi) else if v &lt; 0 then reduce(v + two_pi) else v }
+  let xr = reduce(x)
+  let x2 = xr * xr
+  let x3 = x2 * xr
+  let x5 = x3 * x2
+  let x7 = x5 * x2
+  xr - x3 / 6.0 + x5 / 120.0 - x7 / 5040.0
+}
+
+let cos_approx = fn(x) {
+  let pi = 3.14159265358979
+  sin_approx(x + pi / 2.0)
+}
+
+// Newton-Raphson sqrt for XZ-plane normalization.
+let sqrt_approx = fn(x) {
+  if x &lt;= 0.0 then 0.0
+  else {
+    let y = x * 0.5
+    let y = (y + x / y) * 0.5
+    let y = (y + x / y) * 0.5
+    let y = (y + x / y) * 0.5
+    y
+  }
+}
+
+// -- Camera helper --
+let mk_cam = fn(px, py, pz, tx, ty, tz, ux, uy, uz, fovy, proj) {
+  let a = []
+  let _ = push(a, px)
+  let _ = push(a, py)
+  let _ = push(a, pz)
+  let _ = push(a, tx)
+  let _ = push(a, ty)
+  let _ = push(a, tz)
+  let _ = push(a, ux)
+  let _ = push(a, uy)
+  let _ = push(a, uz)
+  let _ = push(a, fovy)
+  let _ = push(a, proj)
+  a
+}
+
+// -- Camera update --
+// All controls use the same `speed` base value.  Yaw angular rate is
+// scaled so the target moves at `speed` world-units/sec tangentially,
+// matching the WASD and pitch translation rates.
+let update_camera = fn(c, dt) {
+  let speed = 8.0 / 3.0 * dt
+
+  // Normalized forward/right in the XZ plane.
+  let dx = c[3] - c[0]
+  let dz = c[5] - c[2]
+  let dist_sq = dx * dx + dz * dz
+  let look_len = if dist_sq &gt; 0.001 then sqrt_approx(dist_sq) else 1.0
+  let fwd_x = dx / look_len
+  let fwd_z = dz / look_len
+  let right_x = fwd_z
+  let right_z = 0.0 - fwd_x
+
+  // Translation: speed world-units/sec (shared by WASD, Q/E).
+  let move   = if rl_is_key_down(KEY_W) then speed else if rl_is_key_down(KEY_S) then 0.0 - speed else 0.0
+  let strafe = if rl_is_key_down(KEY_D) then speed else if rl_is_key_down(KEY_A) then 0.0 - speed else 0.0
+  let vert   = if rl_is_key_down(KEY_Q) then speed else if rl_is_key_down(KEY_E) then 0.0 - speed else 0.0
+
+  let px = c[0] + fwd_x * move + right_x * strafe
+  let py = c[1] + vert
+  let pz = c[2] + fwd_z * move + right_z * strafe
+  let tx = c[3] + fwd_x * move + right_x * strafe
+  let ty = c[4] + vert
+  let tz = c[5] + fwd_z * move + right_z * strafe
+
+  // Yaw: tangential target speed == speed.  yaw_rad = speed / look_len.
+  let yaw_rate = speed / look_len
+  let yaw = if rl_is_key_down(KEY_RIGHT) then yaw_rate else if rl_is_key_down(KEY_LEFT) then 0.0 - yaw_rate else 0.0
+
+  let ndx = tx - px
+  let ndz = tz - pz
+  let cy = cos_approx(yaw)
+  let sy = sin_approx(yaw)
+  let rtx = px + ndx * cy - ndz * sy
+  let rtz = pz + ndx * sy + ndz * cy
+
+  // Pitch: vertical target speed == speed.
+  let rty = if rl_is_key_down(KEY_UP) then ty + speed else if rl_is_key_down(KEY_DOWN) then ty - speed else ty
+
+  mk_cam(px, py, pz, rtx, rty, rtz, c[6], c[7], c[8], c[9], c[10])
+}
+
+// -- Draw 3D scene --
+let draw_scene = fn(cam, t) {
+  let cube_y = 1.0 + sin_approx(t * 2.0) * 0.5
+  let sphere_x = cos_approx(t) * 3.0
+  let sphere_z = sin_approx(t) * 3.0
+  let cyl_x = cos_approx(t * 0.7) * 5.0
+  let cyl_z = sin_approx(t * 0.7) * 5.0
+
+  rl_begin_drawing()
+  rl_clear_background(20, 20, 30)
+
+  rl_begin_mode_3d(cam[0], cam[1], cam[2], cam[3], cam[4], cam[5],
+                   cam[6], cam[7], cam[8], cam[9], cam[10])
+
+  rl_draw_grid(20, 1.0)
+
+  // Red bouncing cube
+  rl_draw_cube(0, cube_y, 0, 2, 2, 2, 230, 41, 55)
+  rl_draw_cube_wires(0, cube_y, 0, 2, 2, 2, 255, 255, 255)
+
+  // Blue orbiting sphere
+  rl_draw_sphere(sphere_x, 1.5, sphere_z, 1.0, 0, 121, 241)
+
+  // Green cylinder
+  rl_draw_cylinder(cyl_x, 1.5, cyl_z, 0.8, 0.8, 3.0, 16, 0, 228, 48)
+  rl_draw_cylinder_wires(cyl_x, 1.5, cyl_z, 0.8, 0.8, 3.0, 16, 200, 200, 200)
+
+  // Yellow marker at origin
+  rl_draw_sphere(0, 0.3, 0, 0.3, 253, 249, 0)
+
+  // Ground plane
+  rl_draw_plane(0, 0, 0, 20, 20, 50, 50, 50)
+
+  // Axis lines: X=red Y=green Z=blue
+  rl_draw_line_3d(0, 0, 0, 3, 0, 0, 230, 41, 55)
+  rl_draw_line_3d(0, 0, 0, 0, 3, 0, 0, 228, 48)
+  rl_draw_line_3d(0, 0, 0, 0, 0, 3, 0, 121, 241)
+
+  rl_end_mode_3d()
+
+  // HUD
+  rl_draw_text("DS + Raylib 3D Demo", 10, 10, 20, 255, 255, 255)
+  rl_draw_text("WASD: move  Q/E: up/down  Arrows: rotate", 10, 40, 16, 180, 180, 180)
+  rl_draw_fps(1180, 10)
+
+  rl_end_drawing()
+}
+
+// -- Main loop --
+let loop = fn() {
+  if rl_window_should_close() then nil
+  else {
+    let dt = rl_get_frame_time()
+    let old_cam = $cam
+    $cam = update_camera(old_cam, dt)
+    draw_scene($cam, rl_get_time())
+    loop()
+  }
+}
+
+loop()
+rl_close_window()
+</code></pre>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+  <script>hljs.highlightAll();</script>
+</body>
+</html>

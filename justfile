@@ -34,6 +34,10 @@ todo:
 snake:
   c3c build ds && ./build/ds examples/snake.ds
 
+# Regenerate website/examples.html from the files in examples/
+website:
+  python3 website/generate.py
+
 # Build the ds-run host binary
 build-ds:
   c3c build ds

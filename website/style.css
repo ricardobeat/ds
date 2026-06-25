@@ -1,0 +1,234 @@
+/* ==========================================================================
+   new-engine website styles
+   Shared by index.html and examples.html.
+   Scope: layout and typography only. Token colors come from highlight.js.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Reset / base
+   -------------------------------------------------------------------------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Theme variables
+   -------------------------------------------------------------------------- */
+:root {
+  --bg: #f4e3bb;          /* warm yellow */
+  --fg: #3a2417;          /* dark chocolate */
+  --heading: #2a1a10;     /* deeper chocolate for headings */
+  --muted: #8a6b4a;       /* warm brown */
+  --border: #d8c194;      /* soft golden-brown rule */
+  --code-bg: #efd9a8;     /* slightly deeper warm panel (inline code) */
+  --code-block-bg: #2b2117; /* dark chocolate panel for code blocks */
+  --inline-code-fg: #5a3a1f;
+  --link: #9a4a1f;        /* burnt-orange chocolate */
+  --link-hover: #7a3410;
+  --max-width: 720px;
+}
+
+/* --------------------------------------------------------------------------
+   Body / typography
+   -------------------------------------------------------------------------- */
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: ui-serif, Georgia, Cambria, "Times New Roman", serif;
+  font-size: 17px;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --------------------------------------------------------------------------
+   Navigation
+   -------------------------------------------------------------------------- */
+nav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: baseline;
+  gap: 1.25rem;
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 0.9rem 1.5rem;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+}
+
+nav .brand {
+  font-weight: 700;
+  color: var(--fg);
+  margin-right: auto;
+}
+
+nav a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+nav a:hover {
+  color: var(--link-hover);
+}
+
+nav a[aria-current="page"] {
+  color: var(--fg);
+}
+
+/* --------------------------------------------------------------------------
+   Content column
+   -------------------------------------------------------------------------- */
+main {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem 5rem;
+}
+
+/* --------------------------------------------------------------------------
+   Headings
+   -------------------------------------------------------------------------- */
+h1,
+h2,
+h3 {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--heading);
+}
+
+h1 {
+  font-size: 1.9rem;
+  margin: 0 0 1.25rem;
+}
+
+h2 {
+  font-size: 1.2rem;
+  margin: 2.75rem 0 0.75rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--border);
+}
+
+h3 {
+  font-size: 1rem;
+  margin: 2rem 0 0.5rem;
+}
+
+/* --------------------------------------------------------------------------
+   Paragraphs
+   -------------------------------------------------------------------------- */
+p {
+  margin: 0 0 1rem;
+}
+
+p.lede {
+  color: var(--muted);
+  font-size: 1.05rem;
+}
+
+p.footer {
+  margin-top: 3rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+/* --------------------------------------------------------------------------
+   Links
+   -------------------------------------------------------------------------- */
+a {
+  color: var(--link);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+
+a:hover {
+  color: var(--link-hover);
+  border-bottom-color: currentColor;
+}
+
+/* --------------------------------------------------------------------------
+   Inline code
+   -------------------------------------------------------------------------- */
+code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.875em;
+}
+
+/* Inline code that is not inside a pre block. */
+:not(pre) > code {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  color: var(--inline-code-fg);
+}
+
+/* --------------------------------------------------------------------------
+   Pre / code blocks
+   -------------------------------------------------------------------------- */
+/* Code blocks keep a dark theme even though the page is light. The dark panel
+   background harmonizes with the warm palette (chocolate, not cold grey) and
+   keeps the atom-one-dark token colors legible. */
+pre {
+  margin: 0 0 1.5rem;
+  border: 1px solid #1c1510;
+  border-radius: 6px;
+  background: var(--code-block-bg);
+  overflow-x: auto;
+  line-height: 1.55;
+}
+
+pre code {
+  display: block;
+  padding: 1rem 1.15rem;
+  font-size: 0.85rem;
+  /* Let highlight.js own the token colors; keep the dark panel background. */
+  background: transparent;
+}
+
+/* highlight.js sets its own background on .hljs; keep it matched to our panel. */
+pre code.hljs {
+  background: transparent;
+  padding: 1rem 1.15rem;
+}
+
+/* Optional caption sitting above a code block, useful for long example pages. */
+.code-caption {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin: 0 0 0.4rem;
+}
+
+/* --------------------------------------------------------------------------
+   Long-form / example page helpers
+   -------------------------------------------------------------------------- */
+hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 2.5rem 0;
+}
+
+ul,
+ol {
+  margin: 0 0 1rem;
+  padding-left: 1.4rem;
+}
+
+li {
+  margin: 0.25rem 0;
+}
