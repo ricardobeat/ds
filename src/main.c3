@@ -181,6 +181,12 @@ fn Value val_rec(Record* p) => (Value)(TAG_RECORD | ((ulong)(uptr)p & PTR_MASK))
 fn Value val_closure(Closure* p) => (Value)(TAG_CLOSURE | ((ulong)(uptr)p & PTR_MASK));
 fn Value val_prim(Prim* p) => (Value)(TAG_PRIM | ((ulong)(uptr)p & PTR_MASK));
 fn Value val_signal(Signal* p) => (Value)(TAG_SIGNAL | ((ulong)(uptr)p & PTR_MASK));
+// val_effect: box an Effect* into a Value for storage in subs lists.
+// TAG_PRIM is reused here because Prim* values are never stored as subs targets —
+// only Signal* (derived) and Effect* are.  is_effect / as_effect recover the pointer.
+fn Value val_effect(Effect* p) => (Value)(TAG_PRIM | ((ulong)(uptr)p & PTR_MASK));
+fn bool is_effect(Value v) => ((ulong)v & TAG_MASK) == TAG_PRIM;
+fn Effect* as_effect(Value v) => (Effect*)(uptr)((ulong)v & PTR_MASK);
 
 fn bool is_num(Value v) => ((ulong)v & NAN_BITS) != NAN_BITS;
 fn bool is_nil(Value v) => (ulong)v == TAG_NIL;
@@ -1006,6 +1012,8 @@ fn void rc_inc_val(Value v) {
         as_rec(v).refcount++;
     } else if (is_closure(v)) {
         as_closure(v).refcount++;
+    } else if (is_signal(v)) {
+        as_signal(v).refcount++;
     }
 }
 
@@ -1025,6 +1033,10 @@ fn void rc_dec_val(Value v) {
             rc_dec_env(c.env);
             mem::free(c);
         }
+    } else if (is_signal(v)) {
+        Signal* s = as_signal(v);
+        s.refcount--;
+        if (s.refcount == 0) signal_free(s);
     }
 }
 
@@ -1344,6 +1356,30 @@ fn void dep_push(DepNode** list, Value target) {
     *list = node;
 }
 
+// Free every node in a dep list.  Does NOT touch targets (weak references).
+fn void dep_free_list(DepNode* list) {
+    DepNode* n = list;
+    while (n != null) {
+        DepNode* next = n.next;
+        mem::free(n);
+        n = next;
+    }
+}
+
+// Unlink and free the first node whose target matches val.  Does NOT touch target.
+fn void dep_remove(DepNode** list, Value val) {
+    DepNode** pp = list;
+    while (*pp != null) {
+        if ((*pp).target == val) {
+            DepNode* dead = *pp;
+            *pp = dead.next;
+            mem::free(dead);
+            return;
+        }
+        pp = &(*pp).next;
+    }
+}
+
 // Register a signal read: link the signal to the active subscriber bidirectionally.
 fn void reactive_track(Signal* sig) {
     if (g_active_subscriber == null) return;
@@ -1359,11 +1395,12 @@ fn void reactive_track(Signal* sig) {
         dep_push(&e.deps, sig_val);
     }
     // Add the active subscriber to the signal's sub list.
-    // Encode derived subscribers as TAG_SIGNAL, effect subscribers as TAG_CLOSURE.
+    // Derived subscribers are stored as TAG_SIGNAL; effect subscribers as TAG_PRIM
+    // (via val_effect, which boxes the Effect* directly so identity is unambiguous).
     if (g_active_is_derived) {
         dep_push(&sig.subs, val_signal((Signal*)(uptr)g_active_subscriber));
     } else {
-        dep_push(&sig.subs, val_closure(((Effect*)(uptr)g_active_subscriber).func));
+        dep_push(&sig.subs, val_effect((Effect*)(uptr)g_active_subscriber));
     }
 }
 
@@ -1385,9 +1422,17 @@ fn void effect_rerun(Effect* e) {
     e.running = true;
     void* prev_sub = g_active_subscriber;
     bool prev_kind = g_active_is_derived;
+    // Unsubscribe from all current deps before resetting the dep list.
+    Value self_val = val_effect(e);
+    for (DepNode* d = e.deps; d != null; d = d.next) {
+        if (is_signal(d.target)) {
+            dep_remove(&as_signal(d.target).subs, self_val);
+        }
+    }
+    dep_free_list(e.deps);
+    e.deps = null;
     g_active_subscriber = e;
     g_active_is_derived = false;
-    e.deps = null;
     // Use eval directly (apply_fn returns tail-call thunks).
     eval(e.func.body, e.func.env);
     g_active_subscriber = prev_sub;
@@ -1401,13 +1446,9 @@ fn void notify_subs(DepNode* subs) {
         if (is_signal(sub.target)) {
             Signal* s = as_signal(sub.target);
             if (signal_is_derived(s)) mark_dirty(s);
-        } else if (is_closure(sub.target)) {
-            for (Effect* e = g_effects; e != null; e = e.next) {
-                if (val_closure(e.func) == sub.target) {
-                    effect_rerun(e);
-                    break;
-                }
-            }
+        } else if (is_effect(sub.target)) {
+            // Effect pointer stored directly — no linear scan needed.
+            effect_rerun(as_effect(sub.target));
         }
     }
 }
@@ -1419,9 +1460,17 @@ fn Value derived_evaluate(Signal* d) {
     d.running = true;
     void* prev_sub = g_active_subscriber;
     bool prev_kind = g_active_is_derived;
+    // Unsubscribe from all current deps before resetting the dep list.
+    Value self_val = val_signal(d);
+    for (DepNode* dep = d.deps; dep != null; dep = dep.next) {
+        if (is_signal(dep.target)) {
+            dep_remove(&as_signal(dep.target).subs, self_val);
+        }
+    }
+    dep_free_list(d.deps);
+    d.deps = null;
     g_active_subscriber = d;
     g_active_is_derived = true;
-    d.deps = null;
     // Use eval() directly (not apply_fn, which returns tail-call thunks).
     Env* call_env = d.closure.env;
     if (d.closure.param_ids.len > 0) {
@@ -1434,6 +1483,69 @@ fn Value derived_evaluate(Signal* d) {
     g_active_subscriber = prev_sub;
     g_active_is_derived = prev_kind;
     return d.current;
+}
+
+// Free a signal and detach it from the reactive graph.
+// Precondition (enforced only by assertion): s.subs == null, meaning no one
+// still subscribes to this signal.  Callers must ensure subscribers are freed
+// or detached first; otherwise we'd be freeing a live node.
+fn void signal_free(Signal* s) {
+    // Safety: detach our own subscription from every signal we read.
+    Value self_val = val_signal(s);
+    for (DepNode* d = s.deps; d != null; d = d.next) {
+        if (is_signal(d.target)) {
+            dep_remove(&as_signal(d.target).subs, self_val);
+        }
+    }
+    dep_free_list(s.deps);
+    s.deps = null;
+    // Free any remaining subscriber nodes (should be empty if ownership is correct).
+    dep_free_list(s.subs);
+    s.subs = null;
+    // Derived signals own their computation closure.
+    if (s.kind == SIG_DERIVED && s.closure != null) {
+        s.closure.refcount--;
+        if (s.closure.refcount == 0) {
+            rc_dec_env(s.closure.env);
+            mem::free(s.closure);
+        }
+        s.closure = null;
+    }
+    mem::free(s);
+}
+
+// Free an effect: unsubscribe from all deps, unlink from g_effects, free.
+fn void effect_free(Effect* e) {
+    // Detach from all signals we were subscribed to.
+    Value self_val = val_effect(e);
+    for (DepNode* d = e.deps; d != null; d = d.next) {
+        if (is_signal(d.target)) {
+            dep_remove(&as_signal(d.target).subs, self_val);
+        }
+    }
+    dep_free_list(e.deps);
+    e.deps = null;
+    // Unlink from the global effect list.
+    if (g_effects == e) {
+        g_effects = e.next;
+    } else {
+        for (Effect* cur = g_effects; cur != null; cur = cur.next) {
+            if (cur.next == e) {
+                cur.next = e.next;
+                break;
+            }
+        }
+    }
+    // Release the closure.
+    if (e.func != null) {
+        e.func.refcount--;
+        if (e.func.refcount == 0) {
+            rc_dec_env(e.func.env);
+            mem::free(e.func);
+        }
+        e.func = null;
+    }
+    mem::free(e);
 }
 
 // ============================================================================
@@ -1836,18 +1948,25 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
                     return { .thrown = true, .value = mk_str("type error: effect expects closure") };
                 }
                 Effect* e = new_effect(as_closure(args[0]));
+                // Retain the closure: new_effect does not take ownership.
+                as_closure(args[0]).refcount++;
                 // Link into global effect list.
-
-
                 e.next = g_effects;
                 g_effects = e;
                 // Run the effect once with tracking.
                 effect_rerun(e);
-                // Return an unsubscribe closure that removes this effect.
-                // We use a prim-call: Call(Prim("__unsub"), [Lit(effect_as_value)])
-                // But we can't easily create a closure at runtime.  Instead, return
-                // the effect pointer as a Value so the user can pass it to __unsub.
-                // For simplicity, just return nil for now (effects live until program end).
+                // Return the effect pointer as a TAG_PRIM (val_effect) Value so the
+                // caller can pass it to __unsub to dispose the effect.
+                return { .value = val_effect(e) };
+            }
+        case "__unsub":
+
+            {
+                // __unsub(effect_val) => nil  — dispose an effect returned by effect().
+                if (args.len < 1 || !is_effect(args[0])) {
+                    return { .thrown = true, .value = mk_str("type error: __unsub expects an effect handle") };
+                }
+                effect_free(as_effect(args[0]));
                 return { .value = mk_nil() };
             }
         case "__element":
