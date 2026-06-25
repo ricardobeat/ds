@@ -5,9 +5,20 @@
 module engine;
 import std::io;
 
+fn void register_cli_modules() {
+    // Register the signals module so standalone scripts can use `from signals import`.
+    // milktea and keys require a real host and are intentionally omitted here.
+    register_module("signals", engine_mk_record(
+        { "get", "set", "signal", "derived", "effect" },
+        { mk_prim("signal_get"), mk_prim("signal_set"), mk_prim("signal"),
+          mk_prim("derived"), mk_prim("effect") }
+    ));
+}
+
 fn int main(String[] args) {
     intern_init();
     builtin_env = make_builtin_env();
+    register_cli_modules();
     if (args.len < 2) {
         io::printn("usage:");
         io::printn("  engine run <file.ds>     evaluate a script and print the result");

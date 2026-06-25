@@ -44,7 +44,7 @@
       "sources": [
         "src/main.c3", "src/parser.c3", "src/formatter.c3",
         "src/compiler.c3", "src/chunk.c3", "src/vm.c3", "src/embed.c3",
-        "example/todo/main.c3"
+        "example/milktea/main.c3"
       ]
     },
     "bench": {

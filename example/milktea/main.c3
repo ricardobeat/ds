@@ -339,7 +339,7 @@ fn milktea::Cmd DsModel.update(DsModel* self, milktea::Msg msg) @dynamic {
             // Auto-inject width/height into the model state so programs don't
             // need to handle WindowSize themselves.
             if (engine::engine_is_record(g_state)) {
-                EvalResult merged = call_prim("record_spread", { g_state, size_rec });
+                EvalResult merged = engine::engine_call_prim("record_spread", { g_state, size_rec });
                 if (!merged.thrown) g_state = merged.value;
             }
             msg_val = engine::engine_mk_tagged("WindowSize", size_rec);
@@ -936,7 +936,7 @@ fn int main(String[] args) {
     engine::engine_register("str_slice", &ds_str_slice);
     engine::engine_register("str_concat", &ds_str_concat);
 
-    String script_path = args.len >= 2 ? args[1] : "example/todo/todo.ds";
+    String script_path = args.len >= 2 ? args[1] : "examples/todo.ds";
     char[]? contents   = file::load_temp(script_path);
     if (catch err = contents) {
         io::printfn("error: could not read %s", script_path);

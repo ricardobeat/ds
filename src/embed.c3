@@ -205,6 +205,11 @@ fn ulong engine_alloc_arrays() => g_alloc_arrays;
 fn ulong engine_alloc_records() => g_alloc_records;
 fn ulong engine_alloc_total() => g_alloc_arrays + g_alloc_records;
 
+// engine_call_prim invokes a named builtin primitive with the given arguments.
+fn EvalResult engine_call_prim(String name, Value[] args) {
+    return prim_dispatch(name, args);
+}
+
 // engine_call invokes a DS closure value with the given arguments.
 // Goes through eval() so TCO trampolining is handled correctly.
 fn EvalResult engine_call(Value fn_val, Value[] args) {
