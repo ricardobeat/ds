@@ -37,6 +37,10 @@ Surface syntax (full grammar lives in `src/parser.c3`):
 - **Calls**: `f(a, b, c)`, methods `r.greet(a, b)` (desugared; receiver
   evaluated once and passed as the explicit `self` argument)
 - **If**: `if cond then a else b`
+- **Loops**: comprehension `[x * 2 for x in arr]` (with optional
+  `if` guard and `x, i` index binding), side-effect loop
+  `for x in arr do expr` / `for x in arr { ... }`, and exclusive
+  range `for x..10 do expr`
 - **Errors**: `throw v` caught by `try e catch name handler`
 - **Sum/match**: `type Shape = Circle(Int) | Rectangle({w,h})`,
   `Construct(tag, v)`, `match s { Circle(c) => ..., Rectangle(r) => ... }`
@@ -99,10 +103,38 @@ let curried = curry(fn(a, b) { a + b })
 Full version with composition and partial application in
 `resources/closures.ds`.
 
-### Loops are recursion
+### Loops
 
-There is no `while` or `for`. A tail-recursive function *is* the loop,
-and the accumulator pattern keeps every call in tail position.
+There are three loop forms, all desugared to existing array primitives
+(`map`, `filter`, `range`) — no new evaluator semantics.
+
+A **list comprehension** is an expression that builds a new array.
+Add an `if` guard to filter, or a second binding `x, i` to get the
+index (element first, index second):
+
+```js
+[x * 2 for x in [1, 2, 3]]               // => [2, 4, 6]
+[x for x in [1, 2, 3, 4] if x % 2 === 0] // => [2, 4]
+[x * i for x, i in [10, 20, 30]]         // => [0, 20, 60]
+```
+
+A **`for` loop** iterates for side effects and evaluates to `nil`.
+Use `do` for a single-expression body or `{ ... }` for a block:
+
+```js
+for x in arr do print(x)
+for x, i in arr { print(i); print(x) }
+```
+
+A **range loop** counts from `0`; `..` is end-exclusive, matching
+slice syntax (`xs[0..3]`):
+
+```js
+for x..5 do print(x)   // prints 0, 1, 2, 3, 4
+```
+
+Recursion still works too: a tail-recursive function *is* a loop, and
+the accumulator pattern keeps every call in tail position.
 
 ```js
 fn fact(n, acc) {

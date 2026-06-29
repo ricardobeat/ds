@@ -1755,6 +1755,21 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
             grown[pa.items.len] = args[1];
             pa.items = grown;
             return { .value = args[0] };
+        case "range":
+
+            {
+                // range(n)  =>  [0, 1, ..., n-1]  (end-exclusive counter array)
+                if (!is_num(args[0])) {
+                    return { .thrown = true, .value = mk_str("type error: range expects number") };
+                }
+                long n = (long)as_num(args[0]);
+                if (n < 0) n = 0;
+                Value[] out = mem::talloc_array(Value, (sz)n);
+                for (long i = 0; i < n; i++) out[i] = mk_num((double)i);
+                Array* res = new_array();
+                res.items = out;
+                return { .value = val_arr(res) };
+            }
         case "array_all":
 
             {
@@ -2950,7 +2965,7 @@ fn Env* make_builtin_env() {
         "and", "or",
         "is_number", "is_string", "is_bool", "is_array", "is_record", "is_nil",
         "record_spread", "record_without", "has_field", "len", "push", "print", "array_all", "slice",
-        "map", "mapi", "filter", "reduce", "filteri",
+        "map", "mapi", "filter", "reduce", "filteri", "range",
         "signal", "signal_get", "signal_set", "derived", "effect",
         "__element", "__begin_render",
         "loadlib", "__mod_get",

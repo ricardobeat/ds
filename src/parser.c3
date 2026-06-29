@@ -55,6 +55,9 @@ enum TokKind : char {
     TK_DOLLAR,
     TK_KW_FROM,
     TK_KW_IMPORT,
+    TK_KW_FOR,
+    TK_KW_IN,
+    TK_KW_DO,
 }
 
 struct Token {
@@ -257,6 +260,12 @@ fn Token lex_ident(Lexer* l, long start_line, long start_col) {
         t.kind = TK_KW_FROM;
     } else if (text == "import") {
         t.kind = TK_KW_IMPORT;
+    } else if (text == "for") {
+        t.kind = TK_KW_FOR;
+    } else if (text == "in") {
+        t.kind = TK_KW_IN;
+    } else if (text == "do") {
+        t.kind = TK_KW_DO;
     } else {
         t.kind = TK_IDENT;
     }
@@ -1109,6 +1118,132 @@ fn AstNode* parse_record_lit(Parser* p) {
     return rec;
 }
 
+// Parse the comprehension tail after BODY and the `for` keyword position.
+// Assumes the cursor is at `for`.  Forms:
+//   [ BODY for x in ARR ]
+//   [ BODY for x, i in ARR ]
+//   [ BODY for x in ARR if GUARD ]
+// Desugars to:  map(ARR, fn(x[, i]) { BODY })   (filter(...) first when guarded)
+fn AstNode* parse_comprehension(Parser* p, AstNode* body) {
+    parser_advance(p); // consume `for`
+    if (!parser_check(p, TK_IDENT)) {
+        parser_set_error(p, "expected loop variable after 'for' in comprehension");
+        return make_array({ });
+    }
+    String xvar = parser_cur(p).text;
+    parser_advance(p);
+    String ivar = "";
+    bool has_idx = false;
+    if (parser_accept(p, TK_COMMA)) {
+        if (!parser_check(p, TK_IDENT)) {
+            parser_set_error(p, "expected index variable after ',' in comprehension");
+            return make_array({ });
+        }
+        ivar = parser_cur(p).text;
+        has_idx = true;
+        parser_advance(p);
+    }
+    if (!parser_accept(p, TK_KW_IN)) {
+        parser_set_error(p, "expected 'in' in comprehension");
+        return make_array({ });
+    }
+    AstNode* arr = parse_expr(p);
+    if (p.error) return arr;
+    AstNode* guard = null;
+    if (parser_accept(p, TK_KW_IF)) {
+        guard = parse_expr(p);
+        if (p.error) return guard;
+    }
+    if (!parser_accept(p, TK_RBRACK)) {
+        parser_set_error(p, "expected ']' to close comprehension");
+        return make_array({ });
+    }
+    String[2] both = { xvar, ivar };
+    String[] params = has_idx ? both[:2] : both[:1];
+    if (guard != null) {
+        // filter ARR by the guard (element-only predicate), then map BODY.
+        AstNode* filtered = make_call(make_var("filter"), { arr, make_lambda({ xvar }, guard) });
+        return make_call(make_var("map"), { filtered, make_lambda(params, body) });
+    }
+    return make_call(make_var("map"), { arr, make_lambda(params, body) });
+}
+
+// Parse a `for` loop statement (cursor is positioned just after `for`).  Forms:
+//   for x in ARR do BODY        -> side-effect loop, yields nil
+//   for x in ARR { BLOCK }      -> side-effect loop, yields nil
+//   for x, i in ARR do BODY     -> element + index
+//   for x..N do BODY            -> range loop over range(N) = [0..N-1]
+// Desugars side-effect loops to:  (map(ARR, fn(x[,i]){ BODY }); nil)
+fn AstNode* parse_for(Parser* p) {
+    if (!parser_check(p, TK_IDENT)) {
+        parser_set_error(p, "expected loop variable after 'for'");
+        return make_lit(mk_nil());
+    }
+    String xvar = parser_cur(p).text;
+    parser_advance(p);
+
+    // Range form: for x..N do BODY
+    if (parser_accept(p, TK_DOTDOT)) {
+        AstNode* end = parse_expr(p);
+        if (p.error) return end;
+        AstNode* body = parse_for_body(p);
+        if (p.error) return body;
+        AstNode* rng = make_call(make_var("range"), { end });
+        AstNode* loop = make_call(make_var("map"), { rng, make_lambda({ xvar }, body) });
+        AstNode*[] seq = mem::talloc_array(AstNode*, 2);
+        seq[0] = loop;
+        seq[1] = make_lit(mk_nil());
+        return make_seq(seq);
+    }
+
+    // In form: for x[, i] in ARR ...
+    String ivar = "";
+    bool has_idx = false;
+    if (parser_accept(p, TK_COMMA)) {
+        if (!parser_check(p, TK_IDENT)) {
+            parser_set_error(p, "expected index variable after ',' in for loop");
+            return make_lit(mk_nil());
+        }
+        ivar = parser_cur(p).text;
+        has_idx = true;
+        parser_advance(p);
+    }
+    if (!parser_accept(p, TK_KW_IN)) {
+        parser_set_error(p, "expected 'in' in for loop");
+        return make_lit(mk_nil());
+    }
+    AstNode* arr = parse_expr(p);
+    if (p.error) return arr;
+    AstNode* body = parse_for_body(p);
+    if (p.error) return body;
+    String[2] both = { xvar, ivar };
+    String[] params = has_idx ? both[:2] : both[:1];
+    AstNode* loop = make_call(make_var("map"), { arr, make_lambda(params, body) });
+    AstNode*[] seq = mem::talloc_array(AstNode*, 2);
+    seq[0] = loop;
+    seq[1] = make_lit(mk_nil());
+    return make_seq(seq);
+}
+
+// Parse the body of a for loop: `do EXPR` (single expression) or `{ BLOCK }`.
+fn AstNode* parse_for_body(Parser* p) {
+    if (parser_accept(p, TK_KW_DO)) {
+        return parse_expr(p);
+    }
+    if (parser_check(p, TK_LBRACE)) {
+        parser_advance(p);
+        AstNode* block_body = parse_block_contents(p);
+        if (p.error) return block_body;
+        if (!parser_accept(p, TK_RBRACE)) {
+            parser_set_error(p, "expected '}' to close for loop body");
+            return block_body;
+        }
+        return block_body;
+    }
+    parser_set_error(p, "expected 'do' or '{' for loop body");
+    return make_lit(mk_nil());
+}
+
 fn AstNode* parse_array_lit(Parser* p) {
     AstNode*[] items = { };
     int n            = 0;
@@ -1116,6 +1251,10 @@ fn AstNode* parse_array_lit(Parser* p) {
         for (;;) {
             AstNode* e = parse_expr(p);
             if (p.error) return make_array({ });
+            // List comprehension: `[ BODY for x[, i] in ARR [if GUARD] ]`.
+            if (n == 0 && parser_check(p, TK_KW_FOR)) {
+                return parse_comprehension(p, e);
+            }
             AstNode*[] ni = mem::talloc_array(AstNode*, (sz)(n + 1));
             for (int i = 0; i < n; i++) ni[i] = items[i];
             ni[n] = e;
@@ -1371,6 +1510,9 @@ fn AstNode* parse_primary(Parser* p) {
             AstNode* el = parse_expr(p);
             if (p.error) return el;
             return make_if(c, tt, el);
+        case TK_KW_FOR:
+            parser_advance(p);
+            return parse_for(p);
         case TK_KW_THROW:
             parser_advance(p);
             AstNode* v = parse_expr(p);

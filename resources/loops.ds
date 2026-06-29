@@ -1,0 +1,17 @@
+// loops.ds — exercises the new for/comprehension/range syntax
+
+// 1. Bracketed list comprehension (expression -> array)
+print([x * 2 for x in [1, 2, 3]])             // [2, 4, 6]
+print([x for x in [1, 2, 3, 4] if x % 2 === 0]) // [2, 4]
+print([x * i for x, i in [10, 20, 30]])        // [0, 20, 60]
+
+// 2. Normal for loop (side effects -> nil)
+let arr = [7, 8, 9]
+print(for x in arr do print(x))                // prints 7,8,9 then nil
+for x, i in arr { print(i); print(x) }         // prints 0,7,1,8,2,9
+for x in arr {
+  print(x)
+}
+
+// 3. Range loop (.. exclusive, implicit start 0)
+print(for x..5 do print(x))                    // prints 0,1,2,3,4 then nil
