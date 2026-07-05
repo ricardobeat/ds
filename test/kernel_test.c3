@@ -267,6 +267,38 @@ fn void test_string_concat() @test {
     };
 }
 
+fn void test_concat_str_basic() @test {
+    @pool() {
+        AstNode* prog = make_call(make_prim_node("concat_str"), { make_lit(mk_str("hello ")), make_lit(mk_str("world")) });
+        Value v       = eval_value(prog);
+        assert(is_str(v));
+        assert(*as_str(v) == "hello world");
+    };
+}
+
+fn void test_concat_str_number() @test {
+    @pool() {
+        AstNode* prog = make_call(make_prim_node("concat_str"), { make_lit(mk_str("n=")), make_lit(mk_num(42.0)) });
+        Value v       = eval_value(prog);
+        assert(is_str(v));
+        assert(*as_str(v) == "n=42");
+    };
+}
+
+fn void test_concat_str_mixed() @test {
+    @pool() {
+        AstNode* prog = make_call(make_prim_node("concat_str"), {
+            make_lit(mk_str("x=")),
+            make_lit(mk_num(1.0)),
+            make_lit(mk_str(", y=")),
+            make_lit(mk_bool(true))
+        });
+        Value v = eval_value(prog);
+        assert(is_str(v));
+        assert(*as_str(v) == "x=1, y=true");
+    };
+}
+
 fn void test_prim_len_string() @test {
     @pool() {
         AstNode* prog = make_call(make_prim_node("len"), { make_lit(mk_str("hello")) });

@@ -21,9 +21,15 @@
 
 ; ── Literals ──────────────────────────────────────────────────
 (string) @string
+(string_fragment) @string
+(string_dollar) @string
 (number) @number
 (boolean) @constant
 (nil_literal) @constant
+
+; ── String interpolation ───────────────────────────────────────
+(interpolation "${" @punctuation.special)
+(interpolation "}" @punctuation.special)
 
 ; ── Operators ─────────────────────────────────────────────────
 "=" @operator

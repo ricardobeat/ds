@@ -30,6 +30,8 @@ engine defaults to `run`.
 Surface syntax (full grammar lives in `src/parser.c3`):
 
 - **Literals**: `42`, `3.14`, `"hi"`, `true`, `false`, `nil`
+- **Strings**: `"hello ${name}"` with JS-style interpolation; numbers and
+  other values are stringified automatically
 - **Bindings**: `let name = expr;` chains into a body expression
 - **Records**: `{ name: "Alice", age: 30 }` with field access via `.name`
 - **Arrays**: `[1, 2, 3]`, indexed with `[i]`, spread/append with

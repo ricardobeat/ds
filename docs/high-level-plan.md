@@ -27,6 +27,7 @@ Expr =
   | Let(name, Type?, init, body) | Assign(name, value) | Seq(exprs)
   | BinOp(op, lhs, rhs)
   | Record(fields) | ArrayLit([Expr])
+  | StringLit(parts:[String | Expr])     // surface only; desugars to concat_str(...)
   | Get(obj, key) | Set(obj, key, value)
   | MethodCall(recv, name, args)        // explicit-self sugar
   | Throw(value) | Try(body, catchName, handler)
@@ -39,6 +40,7 @@ The lowerings:
 Let(x,_,init,body)   → Call(Lambda([x], body), [init])      // binding = calling
 Seq([a,b])           → Call(Lambda([_], b), [a])
 BinOp(op,x,y)        → Call(Prim(op), [x,y])                // operators are builtins
+StringLit(parts)     → Call(Prim "concat_str", parts)        // values stringified at runtime
 while(cond,body)     → recursion (see below)
 
 MethodCall(recv,m,args)                                     // receiver evaluated once

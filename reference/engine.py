@@ -335,7 +335,9 @@ PRIMS = {
     "is_record": lambda a: isinstance(a, Record),
     "has_field": lambda r, k: isinstance(r, Record) and k in r.fields,
     "len":       lambda a: float(len(a.items)) if isinstance(a, Array) else float(len(a)),
-    "push":      lambda a, x: (a.items.append(x), None)[1],
+    "append":    lambda a, *xs: Array(a.items + list(xs)),
+    "concat":    lambda a, b: Array(a.items + b.items),
+    "concat_str": lambda *xs: "".join(_show(x) for x in xs),
     "print":     lambda *xs: (print(*[_show(x) for x in xs]), None)[1],
 }
 

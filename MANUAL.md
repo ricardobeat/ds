@@ -20,12 +20,16 @@ DS is a small, expression-oriented scripting language with JSX-like element synt
 | Type    | Example                         |
 |---------|---------------------------------|
 | Number  | `42`, `3.14`, `-1`              |
-| String  | `"hello"`, `"line\nnewline"`    |
+| String  | `"hello"`, `"line\nnewline"`, `"x = ${x}"` |
 | Raw string | `` `no escapes here` ``      |
 | Boolean | `true`, `false`                 |
 | Nil     | `nil`                           |
 
 String escape sequences: `\"`, `\\`, `\n`, `\r`, `\t`, `\0`.
+
+Interpolation: any expression can be embedded in a double-quoted string
+with `${...}`. Numbers and other values are stringified automatically.
+Use `\$` for a literal dollar sign.
 
 ---
 
@@ -220,7 +224,8 @@ a[len(a) - 1]   // last element
 | Function | Description |
 |----------|-------------|
 | `len(arr)` | Length |
-| `push(arr, val)` | Append in-place (returns `nil`) |
+| `append(arr, a, b, ...)` | New array with items appended |
+| `concat(a, b)` | New array concatenating two arrays |
 | `slice(arr, from, to)` | Sub-array `[from, to)` |
 | `map(arr, fn)` | Transform each element |
 | `mapi(arr, fn)` | Like `map` but `fn(elem, index)` |
@@ -458,6 +463,7 @@ KEY_RUNE("a")    // match a specific character
 
 | Function | Description |
 |----------|-------------|
+| `concat_str(a, b, ...)` | Concatenate values, stringifying non-strings |
 | `num_to_str(n)` | Number to string |
 | `str_repeat(s, n)` | Repeat string n times |
 | `str_pad_left(s, w, ch)` | Left-pad to width |

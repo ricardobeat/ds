@@ -124,6 +124,7 @@ fn bool try_emit_builtin(Compiler* c, String name) {
         case "len":
         case "append":
         case "concat":
+        case "concat_str":
         case "print":
         case "array_all":
         case "slice":

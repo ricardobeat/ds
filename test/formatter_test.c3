@@ -100,6 +100,23 @@ fn void test_fmt_if_multiline_when_long() @test {
     assert(out.contains("\nelse\n"));
 }
 
+fn void test_fmt_string_interpolation() @test {
+    String out = fmt("let x = 1; \"x = ${x}\"");
+    assert(out.contains("\"x = ${x}\""));
+}
+
+fn void test_fmt_string_interpolation_multiple() @test {
+    String out = fmt("let x = 1; let y = 2; \"x=${x}, y=${y}\"");
+    assert(out.contains("\"x=${x}, y=${y}\""));
+}
+
+fn void test_fmt_string_interpolation_idempotent() @test {
+    String src = "let x = 1; \"x = ${x}\"";
+    String once  = fmt(src);
+    String twice = fmt(once);
+    assert(once == twice, "interpolation formatter should be idempotent");
+}
+
 fn void test_fmt_if_singleline_when_short() @test {
     String out = fmt("if 1 < 2 then 10 else 20");
     assert(out.contains("if 1 < 2 then 10 else 20"));

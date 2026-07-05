@@ -53,6 +53,7 @@ enum TokKind : char {
     TK_KW_TYPE,
     TK_KW_MATCH,
     TK_DOLLAR,
+    TK_INTERP_START,
     TK_KW_FROM,
     TK_KW_IMPORT,
     TK_KW_FOR,
@@ -75,6 +76,9 @@ struct Lexer {
     long col;
     bool has_peek;
     Token peek_tok;
+    bool interp_start_pending;
+    int[8] state_stack;  // 0 = string frame, >0 = interpolation frame (brace count)
+    int state_top;       // -1 when not inside any string/interpolation
 }
 
 fn bool is_digit(char c) => c >= '0' && c <= '9';
@@ -187,7 +191,9 @@ fn Token lex_number(Lexer* l, long start_line, long start_col) {
 }
 
 fn Token lex_string(Lexer* l, long start_line, long start_col) {
-    l.pos++;
+    // We are inside a string literal. lex_next has already consumed the
+    // opening quote (or resumed string mode after an interpolation), so we
+    // just scan content until the closing quote or the next interpolation.
     DString buf;
     buf.tinit();
     while (l.pos < l.src.len && l.src[l.pos] != '"') {
@@ -204,16 +210,37 @@ fn Token lex_string(Lexer* l, long start_line, long start_col) {
             l.pos += 2;
             continue;
         }
+        if (l.src[l.pos] == '$' && l.pos + 1 < l.src.len && l.src[l.pos + 1] == '{') {
+            // Interpolation point: return the prefix as a string token,
+            // and arrange for the next token to be TK_INTERP_START.
+            l.interp_start_pending = true;
+            if (l.state_top + 2 < (int)l.state_stack.len) {
+                l.state_top++;
+                l.state_stack[l.state_top] = 1;
+            }
+            Token t;
+            t.kind = TK_STR;
+            t.text = buf.str_view();
+            t.num_val = 0.0;
+            t.line = start_line;
+            t.col = start_col;
+            return t;
+        }
         buf.append_char(l.src[l.pos]);
         l.pos++;
     }
     if (l.pos < l.src.len) l.pos++;
+    if (l.state_top >= 0) l.state_top--;
     Token t;
     t.kind = TK_STR;
     t.text = buf.str_view();
     t.num_val = 0.0;
     t.line = start_line;
     t.col = start_col;
+    if (t.text.len == 0 && l.pos >= l.src.len) {
+        t.kind = TK_EOF;
+        t.text = "";
+    }
     return t;
 }
 
@@ -454,6 +481,23 @@ fn Token lex_one(Lexer* l, long start_line, long start_col) {
 }
 
 fn Token lex_next(Lexer* l) {
+    if (l.interp_start_pending) {
+        l.interp_start_pending = false;
+        Token t;
+        t.kind = TK_INTERP_START;
+        t.text = "${";
+        t.num_val = 0.0;
+        t.line = l.line;
+        t.col = l.col;
+        l.pos += 2;
+        return t;
+    }
+    // state_top >= 0 means we're inside a string or interpolation.
+    // state_stack[top] == 0 is a string frame; >0 is an interpolation frame
+    // recording how many nested regular braces it contains.
+    if (l.state_top >= 0 && l.state_stack[l.state_top] == 0) {
+        return lex_string(l, l.line, l.col);
+    }
     lex_skip_ws_and_comments(l);
     if (l.pos >= l.src.len) {
         Token t;
@@ -464,11 +508,48 @@ fn Token lex_next(Lexer* l) {
         t.col = l.col;
         return t;
     }
+    // Inside an interpolation we track { } nesting so that records/blocks
+    // and nested template literals work. When the interpolation frame pops,
+    // the lexer automatically resumes the enclosing string (if any).
+    if (l.state_top >= 0 && l.state_stack[l.state_top] > 0) {
+        char c = l.src[l.pos];
+        if (c == '{') {
+            l.state_stack[l.state_top]++;
+            l.pos++;
+            Token t;
+            t.kind = TK_LBRACE;
+            t.text = "{";
+            t.num_val = 0.0;
+            t.line = l.line;
+            t.col = l.col;
+            return t;
+        }
+        if (c == '}') {
+            Token t;
+            t.kind = TK_RBRACE;
+            t.text = "}";
+            t.num_val = 0.0;
+            t.line = l.line;
+            t.col = l.col;
+            l.pos++;
+            if (l.state_stack[l.state_top] > 1) {
+                l.state_stack[l.state_top]--;
+            } else {
+                l.state_top--;
+            }
+            return t;
+        }
+    }
     long sl = l.line;
     long sc = l.col;
     char c  = l.src[l.pos];
     if (is_digit(c)) return lex_number(l, sl, sc);
-    if (c == '"') return lex_string(l, sl, sc);
+    if (c == '"') {
+        l.pos++;              // consume opening quote
+        l.state_top++;
+        l.state_stack[l.state_top] = 0;
+        return lex_string(l, sl, sc);
+    }
     if (is_alpha(c)) return lex_ident(l, sl, sc);
     return lex_one(l, sl, sc);
 }
@@ -486,6 +567,8 @@ fn void lex_init(Lexer* l, String src) {
     l.line = 0;
     l.col = 0;
     l.has_peek = false;
+    l.interp_start_pending = false;
+    l.state_top = -1;
 }
 
 // ============================================================================
@@ -1320,6 +1403,48 @@ fn AstNode* parse_array_lit(Parser* p) {
     return acc;
 }
 
+fn AstNode* parse_interpolated_string(Parser* p, long ln) {
+    // Surface syntax: "hello ${name}!" desugars to concat_str("hello ", name, "!").
+    // Empty leading/trailing literal segments are dropped.
+    AstNode*[] parts = { };
+    int n = 0;
+    for (;;) {
+        if (p.error) return make_lit(mk_nil());
+        if (parser_check(p, TK_EOF)) break;
+        if (!parser_check(p, TK_STR)) {
+            parser_set_error(p, "expected string segment in interpolation");
+            return make_lit(mk_nil());
+        }
+        Token seg = parser_cur(p);
+        parser_advance(p);
+        if (seg.text.len > 0) {
+            AstNode*[] np = mem::talloc_array(AstNode*, (sz)(n + 1));
+            for (int i = 0; i < n; i++) np[i] = parts[i];
+            np[n] = lined(make_lit(mk_str_intern(seg.text)), ln);
+            parts = np;
+            n++;
+        }
+        if (parser_check(p, TK_INTERP_START)) {
+            parser_advance(p);
+            AstNode* e = parse_expr(p);
+            if (p.error) return e;
+            if (!parser_accept(p, TK_RBRACE)) {
+                parser_set_error(p, "expected '}' to close interpolation");
+                return e;
+            }
+            AstNode*[] np = mem::talloc_array(AstNode*, (sz)(n + 1));
+            for (int i = 0; i < n; i++) np[i] = parts[i];
+            np[n] = e;
+            parts = np;
+            n++;
+            continue;
+        }
+        break;
+    }
+    if (n == 0) return lined(make_lit(mk_str_intern("")), ln);
+    return lined(make_call(make_var("concat_str"), parts), ln);
+}
+
 // Destructuring record: one slot per param that used { x, y } syntax.
 // pindex = which positional param was destructured; fields = names to extract.
 struct DestructureSlot {
@@ -1464,6 +1589,9 @@ fn AstNode* parse_primary(Parser* p) {
             parser_advance(p);
             return lined(make_lit(mk_num(t.num_val)), ln);
         case TK_STR:
+            if (lex_peek(p.lex).kind == TK_INTERP_START) {
+                return parse_interpolated_string(p, ln);
+            }
             parser_advance(p);
             return lined(make_lit(mk_str_intern(t.text)), ln);
         case TK_KW_TRUE:

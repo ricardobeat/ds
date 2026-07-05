@@ -1773,6 +1773,16 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
                 res.items = grown;
                 return { .value = val_arr(res) };
             }
+        case "concat_str":
+            {
+                DString buf;
+                buf.tinit();
+                for (sz i = 0; i < args.len; i++) {
+                    Value s = is_str(args[i]) ? args[i] : show(args[i]);
+                    buf.append(*as_str(s));
+                }
+                return { .value = mk_str(buf.str_view()) };
+            }
         case "range":
 
             {
@@ -2982,7 +2992,7 @@ fn Env* make_builtin_env() {
         "===", "<", ">", "<=", ">=",
         "and", "or",
         "is_number", "is_string", "is_bool", "is_array", "is_record", "is_nil",
-        "record_spread", "record_without", "has_field", "len", "append", "concat", "print", "array_all", "slice",
+        "record_spread", "record_without", "has_field", "len", "append", "concat", "concat_str", "print", "array_all", "slice",
         "map", "mapi", "filter", "reduce", "filteri", "range",
         "signal", "signal_get", "signal_set", "derived", "effect",
         "__element", "__begin_render",

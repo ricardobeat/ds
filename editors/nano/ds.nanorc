@@ -23,7 +23,7 @@ color brightgreen   "\<(let|fn|if|then|else|match|type|throw|try|catch|and|or|fr
 color brightmagenta "\<(true|false|nil)\>"
 
 ## Builtin functions
-color brightblue    "\<(len|push|slice|map|mapi|filter|filteri|reduce|array_all|has_field)\>"
+color brightblue    "\<(len|append|concat|concat_str|slice|map|mapi|filter|filteri|reduce|array_all|has_field)\>"
 color brightblue    "\<(print|is_array|is_record|is_number|is_string|is_bool|is_nil)\>"
 color brightblue    "\<(signal|signal_get|signal_set|derived|effect)\>"
 color brightblue    "\<(floor|ceil|round|abs|max|min)\>"

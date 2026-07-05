@@ -111,6 +111,48 @@ fn void test_parser_string_concat() @test {
     assert(*as_str(v) == "foobar");
 }
 
+fn void test_parser_string_interpolation_basic() @test {
+    Value v = run_parsed("let name = \"world\"; \"hello ${name}\"");
+    assert(is_str(v));
+    assert(*as_str(v) == "hello world");
+}
+
+fn void test_parser_string_interpolation_multiple() @test {
+    Value v = run_parsed("let x = 1; let y = 2; \"x=${x}, y=${y}\"");
+    assert(is_str(v));
+    assert(*as_str(v) == "x=1, y=2");
+}
+
+fn void test_parser_string_interpolation_number() @test {
+    Value v = run_parsed("let n = 42; \"n=${n}\"");
+    assert(is_str(v));
+    assert(*as_str(v) == "n=42");
+}
+
+fn void test_parser_string_interpolation_expression() @test {
+    Value v = run_parsed("let a = 1; let b = 2; \"sum=${a + b}\"");
+    assert(is_str(v));
+    assert(*as_str(v) == "sum=3");
+}
+
+fn void test_parser_string_interpolation_nested() @test {
+    Value v = run_parsed("let x = 42; \"outer ${\"inner ${x}\"} end\"");
+    assert(is_str(v));
+    assert(*as_str(v) == "outer inner 42 end");
+}
+
+fn void test_parser_string_interpolation_record() @test {
+    Value v = run_parsed("\"value = ${{a: 1}.a}\"");
+    assert(is_str(v));
+    assert(*as_str(v) == "value = 1");
+}
+
+fn void test_parser_string_interpolation_escaped_dollar() @test {
+    Value v = run_parsed("\"price: $${5}\"");
+    assert(is_str(v));
+    assert(*as_str(v) == "price: $5");
+}
+
 fn void test_parser_record_get() @test {
     // { x: 3, y: 4 }.y   =>  4
     Value v = run_parsed("{ x: 3, y: 4 }.y");

@@ -362,6 +362,33 @@ fn void fmt_expr(DString* buf, AstNode* e, int indent) {
                 buf.append("]");
                 return;
             }
+            // Pattern: concat_str(parts...) → "...${...}..."
+            if (e.children.len >= 2 && is_callee_named(e.children[0], "concat_str")) {
+                buf.append_char('"');
+                for (int i = 1; i < e.children.len; i++) {
+                    AstNode* part = e.children[i];
+                    if (part.type == LIT && is_str(part.literal)) {
+                        String s = *as_str(part.literal);
+                        for (sz j = 0; j < s.len; j++) {
+                            char c = s[j];
+                            switch (c) {
+                                case '"': buf.append("\\\""); break;
+                                case '\\': buf.append("\\\\"); break;
+                                case '\n': buf.append("\\n"); break;
+                                case '\r': buf.append("\\r"); break;
+                                case '\t': buf.append("\\t"); break;
+                                default: buf.append_char(c); break;
+                            }
+                        }
+                    } else {
+                        buf.append("${");
+                        fmt_expr(buf, part, indent);
+                        buf.append_char('}');
+                    }
+                }
+                buf.append_char('"');
+                return;
+            }
             fmt_expr(buf, e.children[0], indent);
             buf.append_char('(');
             for (int i = 1; i < e.children.len; i++) {
