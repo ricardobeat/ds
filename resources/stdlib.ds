@@ -1,7 +1,6 @@
 // A small "standard library" built from the language primitives.
 // Demonstrates composing recursion, arrays, and closures.
-// Note: push mutates in-place (returns nil), so we use the
-// accumulator pattern with numbers/strings instead of array building.
+// Arrays are immutable; use [...base, x] or append(base, x) to build them.
 
 // ── fold over an array ───────────────────────────────────────────
 

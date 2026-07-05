@@ -6,10 +6,9 @@ let a = [10, 20, 30, 40, 50]
 let first = a[0]
 let last = a[len(a) - 1]
 
-// push mutates in-place (returns nil) — used for side effects
-let b = [1, 2, 3]
-push(b, 4)
-push(b, 5)
+// append returns a new array; original is unchanged
+let b = append([1, 2, 3], 4, 5)
+// equivalently: [...[1, 2, 3], 4, 5]
 
 // slice extracts a sub-range
 let mid = slice(a, 1, 4)
@@ -50,7 +49,7 @@ fn all_positive(arr, i) {
 {
   first: first,
   last: last,
-  b_after_push: b,
+  b_after_append: b,
   mid: mid,
   matrix_center: center,
   sum_a: sum(a, 0, 0),

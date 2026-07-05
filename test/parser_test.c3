@@ -125,6 +125,27 @@ fn void test_parser_array_index() @test {
     assert(as_num(v) == 20.0);
 }
 
+fn void test_parser_array_spread_append() @test {
+    // [...[1, 2], 3, 4]  =>  [1, 2, 3, 4]
+    Value v = run_parsed("let a = [1, 2]; [...a, 3, 4]");
+    assert(is_arr(v));
+    assert(as_arr(v).items.len == 4);
+}
+
+fn void test_parser_array_spread_concat() @test {
+    // [...[1, 2], ...[3, 4]]  =>  [1, 2, 3, 4]
+    Value v = run_parsed("[...[1, 2], ...[3, 4]]");
+    assert(is_arr(v));
+    assert(as_arr(v).items.len == 4);
+}
+
+fn void test_parser_array_spread_no_mutation() @test {
+    // Spreading an array must not mutate it.
+    Value v = run_parsed("let a = [1, 2]; let b = [...a, 3]; len(a)");
+    assert(is_num(v));
+    assert(as_num(v) == 2.0);
+}
+
 fn void test_parser_let_simple() @test {
     // let x = 5; x * 2  =>  10
     Value v = run_parsed("let x = 5; x * 2");

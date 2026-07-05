@@ -1745,16 +1745,34 @@ fn EvalResult prim_dispatch(String name, Value[] args) {
                 return { .value = mk_num((double)(*as_str(args[0])).len) };
             }
             return { .thrown = true, .value = mk_str("type error: len expects array or string") };
-        case "push":
-            if (!is_arr(args[0])) {
-                return { .thrown = true, .value = mk_str("type error: push expects array") };
+        case "append":
+            {
+                if (args.len == 0 || !is_arr(args[0])) {
+                    return { .thrown = true, .value = mk_str("type error: append expects array as first arg") };
+                }
+                Array* base = as_arr(args[0]);
+                sz extra = args.len - 1;
+                Value[] grown = mem::talloc_array(Value, base.items.len + extra);
+                for (sz i = 0; i < base.items.len; i++) grown[i] = base.items[i];
+                for (sz i = 0; i < extra; i++) grown[base.items.len + i] = args[1 + i];
+                Array* res = new_array();
+                res.items = grown;
+                return { .value = val_arr(res) };
             }
-            Array* pa = as_arr(args[0]);
-            Value[] grown = mem::talloc_array(Value, pa.items.len + 1);
-            for (int i = 0; i < pa.items.len; i++) grown[i] = pa.items[i];
-            grown[pa.items.len] = args[1];
-            pa.items = grown;
-            return { .value = args[0] };
+        case "concat":
+            {
+                if (args.len != 2 || !is_arr(args[0]) || !is_arr(args[1])) {
+                    return { .thrown = true, .value = mk_str("type error: concat expects two arrays") };
+                }
+                Array* a = as_arr(args[0]);
+                Array* b = as_arr(args[1]);
+                Value[] grown = mem::talloc_array(Value, a.items.len + b.items.len);
+                for (sz i = 0; i < a.items.len; i++) grown[i] = a.items[i];
+                for (sz i = 0; i < b.items.len; i++) grown[a.items.len + i] = b.items[i];
+                Array* res = new_array();
+                res.items = grown;
+                return { .value = val_arr(res) };
+            }
         case "range":
 
             {
@@ -2964,7 +2982,7 @@ fn Env* make_builtin_env() {
         "===", "<", ">", "<=", ">=",
         "and", "or",
         "is_number", "is_string", "is_bool", "is_array", "is_record", "is_nil",
-        "record_spread", "record_without", "has_field", "len", "push", "print", "array_all", "slice",
+        "record_spread", "record_without", "has_field", "len", "append", "concat", "print", "array_all", "slice",
         "map", "mapi", "filter", "reduce", "filteri", "range",
         "signal", "signal_get", "signal_set", "derived", "effect",
         "__element", "__begin_render",

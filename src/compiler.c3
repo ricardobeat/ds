@@ -122,7 +122,8 @@ fn bool try_emit_builtin(Compiler* c, String name) {
         case "is_nil":
         case "has_field":
         case "len":
-        case "push":
+        case "append":
+        case "concat":
         case "print":
         case "array_all":
         case "slice":

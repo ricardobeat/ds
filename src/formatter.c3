@@ -342,6 +342,26 @@ fn void fmt_expr(DString* buf, AstNode* e, int indent) {
                 fmt_expr(buf, e.children[2], indent);
                 return;
             }
+            // Pattern: append(base, item...) → [...base, item...]
+            if (e.children.len >= 2 && is_callee_named(e.children[0], "append")) {
+                buf.append("[...");
+                fmt_expr(buf, e.children[1], indent);
+                for (int i = 2; i < e.children.len; i++) {
+                    buf.append(", ");
+                    fmt_expr(buf, e.children[i], indent);
+                }
+                buf.append("]");
+                return;
+            }
+            // Pattern: concat(a, b) → [...a, ...b]
+            if (e.children.len == 3 && is_callee_named(e.children[0], "concat")) {
+                buf.append("[...");
+                fmt_expr(buf, e.children[1], indent);
+                buf.append(", ...");
+                fmt_expr(buf, e.children[2], indent);
+                buf.append("]");
+                return;
+            }
             fmt_expr(buf, e.children[0], indent);
             buf.append_char('(');
             for (int i = 1; i < e.children.len; i++) {

@@ -138,7 +138,7 @@ fn void test_array_lit_and_index() @test {
     };
 }
 
-fn void test_array_push() @test {
+fn void test_array_len() @test {
     @pool() {
         // let a = [1,2,3]; len(a)  =>  3
         AstNode* arr      = make_array({ make_lit(mk_num(1.0)), make_lit(mk_num(2.0)), make_lit(mk_num(3.0)) });
@@ -147,6 +147,30 @@ fn void test_array_push() @test {
         Value v           = eval_value(prog);
         assert(is_num(v));
         assert(as_num(v) == 3.0);
+    };
+}
+
+fn void test_array_append_and_concat() @test {
+    @pool() {
+        // append([1,2], 3, 4) => [1,2,3,4]
+        AstNode* append_call = make_call(make_prim_node("append"),
+            { make_array({ make_lit(mk_num(1.0)), make_lit(mk_num(2.0)) }),
+              make_lit(mk_num(3.0)), make_lit(mk_num(4.0)) });
+        AstNode* len_call = make_call(make_prim_node("len"), { append_call });
+        AstNode* prog     = make_let("a", len_call, make_var("a"));
+        Value v           = eval_value(prog);
+        assert(is_num(v));
+        assert(as_num(v) == 4.0);
+
+        // concat([1,2], [3,4]) => [1,2,3,4]
+        AstNode* concat_call = make_call(make_prim_node("concat"),
+            { make_array({ make_lit(mk_num(1.0)), make_lit(mk_num(2.0)) }),
+              make_array({ make_lit(mk_num(3.0)), make_lit(mk_num(4.0)) }) });
+        AstNode* len_call2 = make_call(make_prim_node("len"), { concat_call });
+        AstNode* prog2     = make_let("b", len_call2, make_var("b"));
+        Value v2           = eval_value(prog2);
+        assert(is_num(v2));
+        assert(as_num(v2) == 4.0);
     };
 }
 

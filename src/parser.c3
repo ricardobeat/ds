@@ -1245,20 +1245,35 @@ fn AstNode* parse_for_body(Parser* p) {
 }
 
 fn AstNode* parse_array_lit(Parser* p) {
-    AstNode*[] items = { };
-    int n            = 0;
+    // Array literal with optional spread segments:
+    //   [a, b]           -> make_array([a, b])
+    //   [...base, a, b]  -> append(base, a, b)
+    //   [...a, ...b]     -> concat(a, b)
+    //   [...a, b, ...c]  -> concat(append(a, b), c)
+    // Segments are parsed left-to-right and combined left-to-right.
+    AstNode*[] segments = { };
+    bool[] is_spread    = { };
+    int n               = 0;
     if (!parser_check(p, TK_RBRACK)) {
         for (;;) {
-            AstNode* e = parse_expr(p);
+            bool spread = parser_accept(p, TK_DOTDOTDOT);
+            AstNode* e  = parse_expr(p);
             if (p.error) return make_array({ });
             // List comprehension: `[ BODY for x[, i] in ARR [if GUARD] ]`.
-            if (n == 0 && parser_check(p, TK_KW_FOR)) {
+            // Only when the very first element is a plain expression followed by 'for'.
+            if (n == 0 && !spread && parser_check(p, TK_KW_FOR)) {
                 return parse_comprehension(p, e);
             }
-            AstNode*[] ni = mem::talloc_array(AstNode*, (sz)(n + 1));
-            for (int i = 0; i < n; i++) ni[i] = items[i];
-            ni[n] = e;
-            items = ni;
+            AstNode*[] ns = mem::talloc_array(AstNode*, (sz)(n + 1));
+            bool[] nsp    = mem::talloc_array(bool, (sz)(n + 1));
+            for (int i = 0; i < n; i++) {
+                ns[i]  = segments[i];
+                nsp[i] = is_spread[i];
+            }
+            ns[n]  = e;
+            nsp[n] = spread;
+            segments = ns;
+            is_spread  = nsp;
             n++;
             if (parser_accept(p, TK_COMMA)) {
                 // Trailing comma before `]` is fine.
@@ -1270,9 +1285,39 @@ fn AstNode* parse_array_lit(Parser* p) {
     }
     if (!parser_accept(p, TK_RBRACK)) {
         parser_set_error(p, "expected ']' to close array literal");
-        return make_array(items);
+        return make_array({ });
     }
-    return make_array(items);
+    if (n == 0) return make_array({ });
+    // Combine segments left-to-right.
+    AstNode* acc;
+    int idx = 0;
+    if (is_spread[0]) {
+        acc = segments[0];
+        idx = 1;
+    } else {
+        // Collect leading non-spread items into a literal array.
+        int count = 0;
+        while (idx + count < n && !is_spread[idx + count]) count++;
+        AstNode*[] init = mem::talloc_array(AstNode*, (sz)count);
+        for (int i = 0; i < count; i++) init[i] = segments[idx + i];
+        acc = make_array(init);
+        idx += count;
+    }
+    while (idx < n) {
+        if (is_spread[idx]) {
+            acc = make_call(make_var("concat"), { acc, segments[idx] });
+            idx++;
+        } else {
+            int count = 0;
+            while (idx + count < n && !is_spread[idx + count]) count++;
+            AstNode*[] app = mem::talloc_array(AstNode*, (sz)(count + 1));
+            app[0] = acc;
+            for (int i = 0; i < count; i++) app[i + 1] = segments[idx + i];
+            acc = make_call(make_var("append"), app);
+            idx += count;
+        }
+    }
+    return acc;
 }
 
 // Destructuring record: one slot per param that used { x, y } syntax.

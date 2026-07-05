@@ -32,7 +32,8 @@ Surface syntax (full grammar lives in `src/parser.c3`):
 - **Literals**: `42`, `3.14`, `"hi"`, `true`, `false`, `nil`
 - **Bindings**: `let name = expr;` chains into a body expression
 - **Records**: `{ name: "Alice", age: 30 }` with field access via `.name`
-- **Arrays**: `[1, 2, 3]`, indexed with `[i]`
+- **Arrays**: `[1, 2, 3]`, indexed with `[i]`, spread/append with
+  `[...base, x, y]` and `[...a, ...b]`
 - **Functions**: `fn(x) { x + 1 }`, with optional `-> ReturnType` annotation
 - **Calls**: `f(a, b, c)`, methods `r.greet(a, b)` (desugared; receiver
   evaluated once and passed as the explicit `self` argument)

@@ -62,11 +62,8 @@ let gen_food = fn(snake, seed, tries) {
 // ── Logic: mutate the signals ──────────────────────────────────────
 
 let grow = fn(head, body, ate) {
-  let next = [head]
   let keep = if ate then len(body) else len(body) - 1
-  let copy = fn(i) { if i >= keep then nil else { push(next, body[i]); copy(i + 1) } }
-  copy(0)
-  next
+  [head, ...slice(body, 0, keep)]
 }
 
 let step = fn() {
@@ -127,16 +124,12 @@ let row_str = fn(r, c, snake, food) {
 }
 
 // One <Text> per row, built from the current snake and food positions.
-let build_rows = fn(acc, r, snake, food) {
-  if r >= ROWS then acc
-  else {
-    push(acc, <Text value=row_str(r, 0, snake, food) fg="#00d7ff" />)
-    build_rows(acc, r + 1, snake, food)
-  }
+let build_rows = fn(snake, food) {
+  [<Text value=row_str(r, 0, snake, food) fg="#00d7ff" /> for r in range(ROWS)]
 }
 
 fn view(state) {
-  let rows = build_rows([], 0, $snake, $food)
+  let rows = build_rows($snake, $food)
   let status =
     if $alive then "Score: " + num_to_str($score) + "   arrows to steer, q quit"
     else "GAME OVER, score " + num_to_str($score) + "   r to restart, q quit"
