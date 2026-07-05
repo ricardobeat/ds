@@ -416,7 +416,7 @@ fn update(state, msg) {
       match k.code {
         ENTER -&gt;
           if string_width(state.input) &gt; 0 then {
-            let h = push(state.history, "&gt; " + state.input)
+            let h = [...state.history, "&gt; " + state.input]
             { ...state, input: "", history: h }
           } else state
 
@@ -546,7 +546,7 @@ fn update_add(state, k) {
   match k.code {
     ESC       -&gt; { ...state, mode: MODE_LIST, input: "" }
     ENTER     -&gt; if string_width(state.input) &gt; 0 then {
-                   let todos = push(state.todos, { text: state.input, done: false })
+                   let todos = [...state.todos, { text: state.input, done: false }]
                    { ...state, todos: todos, cursor: len(todos) - 1, mode: MODE_LIST, input: "" }
                  } else state
     BACKSPACE -&gt; {
@@ -690,11 +690,8 @@ let gen_food = fn(snake, seed, tries) {
 // ── Logic: mutate the signals ──────────────────────────────────────
 
 let grow = fn(head, body, ate) {
-  let next = [head]
   let keep = if ate then len(body) else len(body) - 1
-  let copy = fn(i) { if i &gt;= keep then nil else { push(next, body[i]); copy(i + 1) } }
-  copy(0)
-  next
+  [head, ...slice(body, 0, keep)]
 }
 
 let step = fn() {
@@ -755,16 +752,12 @@ let row_str = fn(r, c, snake, food) {
 }
 
 // One &lt;Text&gt; per row, built from the current snake and food positions.
-let build_rows = fn(acc, r, snake, food) {
-  if r &gt;= ROWS then acc
-  else {
-    push(acc, &lt;Text value=row_str(r, 0, snake, food) fg="#00d7ff" /&gt;)
-    build_rows(acc, r + 1, snake, food)
-  }
+let build_rows = fn(snake, food) {
+  [&lt;Text value=row_str(r, 0, snake, food) fg="#00d7ff" /&gt; for r in range(ROWS)]
 }
 
 fn view(state) {
-  let rows = build_rows([], 0, $snake, $food)
+  let rows = build_rows($snake, $food)
   let status =
     if $alive then "Score: " + num_to_str($score) + "   arrows to steer, q quit"
     else "GAME OVER, score " + num_to_str($score) + "   r to restart, q quit"
@@ -846,19 +839,7 @@ let sqrt_approx = fn(x) {
 
 // -- Camera helper --
 let mk_cam = fn(px, py, pz, tx, ty, tz, ux, uy, uz, fovy, proj) {
-  let a = []
-  let _ = push(a, px)
-  let _ = push(a, py)
-  let _ = push(a, pz)
-  let _ = push(a, tx)
-  let _ = push(a, ty)
-  let _ = push(a, tz)
-  let _ = push(a, ux)
-  let _ = push(a, uy)
-  let _ = push(a, uz)
-  let _ = push(a, fovy)
-  let _ = push(a, proj)
-  a
+  [px, py, pz, tx, ty, tz, ux, uy, uz, fovy, proj]
 }
 
 // -- Camera update --
