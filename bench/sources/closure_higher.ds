@@ -1,0 +1,8 @@
+// closure_higher — higher-order function: map, filter, reduce via closures
+fn fold(arr, f, i, acc) {
+  if i === len(arr) then acc
+  else fold(arr, f, i + 1, f(acc, arr[i]))
+}
+let nums = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+let sum_sq = fold(nums, fn(a, b) { a + b * b }, 0, 0)
+sum_sq

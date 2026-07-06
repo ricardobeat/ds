@@ -45,9 +45,12 @@ fn void end_scope(Compiler* c) {
     while (c.local_count > 0 && c.locals[c.local_count - 1].depth > c.scope_depth) {
         if (c.locals[c.local_count - 1].is_captured) {
             emit_op(c.chunk, (char)Op.CLOSE_UPVAL, 0);
-        } else {
-            emit_op(c.chunk, (char)Op.POP, 0);
         }
+        // Emit CLEAR_LOCAL: rc-dec the slot's value without disturbing sp.
+        // (POP would also pop the trailing body expression's result that sits
+        // on top of the stack after end_scope returns.)
+        emit_op(c.chunk, (char)Op.CLEAR_LOCAL, 0);
+        emit_op(c.chunk, (char)c.locals[c.local_count - 1].slot, 0);
         c.local_count--;
     }
     c.scope_depth--;
@@ -368,28 +371,28 @@ fn void compile_expr(Compiler* c, AstNode* node, bool tail_pos) {
                     return;
                 }
             }
-            // Fused LOAD_FCALL: load local + call in one dispatch
+            // Tail-position fused opcodes: LOAD_LOCAL + immediate TAILCALL.
+            // Only safe in tail position because they read the callee from
+            // frame.base + slot (no copy onto stack), so they cannot coexist
+            // with values already on the stack from a non-tail caller.
+            // In non-tail position we must LOAD_LOCAL the callee so it sits on
+            // top of any pending values, then issue a regular CALL.
             int call_argc = node.children.len - 1;
-            if (callee.type == VAR) {
+            if (tail_pos && callee.type == VAR) {
                 int call_slot = resolve_local(c, callee.name_id);
                 if (call_slot >= 0) {
                     // compile args
                     for (int i = 1; i < node.children.len; i++) {
                         compile_expr(c, node.children[i], false);
                     }
-                    if (tail_pos) {
-                        emit_op(c.chunk, (char)Op.TAILCALL_LOCAL, line);
-                        emit_op(c.chunk, (char)call_slot, line);
-                        emit_op(c.chunk, (char)call_argc, line);
-                    } else {
-                        emit_op(c.chunk, (char)Op.LOAD_FCALL, line);
-                        emit_op(c.chunk, (char)call_slot, line);
-                        emit_op(c.chunk, (char)call_argc, line);
-                    }
+                    emit_op(c.chunk, (char)Op.TAILCALL_LOCAL, line);
+                    emit_op(c.chunk, (char)call_slot, line);
+                    emit_op(c.chunk, (char)call_argc, line);
                     return;
                 }
             }
-            // General path: compile callee + args, emit CALL/TAILCALL
+            // Non-tail path (or callee is not a local): push callee onto stack
+            // alongside args, then CALL/TAILCALL reads fn from sp-argc-1.
             compile_expr(c, callee, false);
             for (int i = 1; i < node.children.len; i++) {
                 compile_expr(c, node.children[i], false);

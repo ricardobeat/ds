@@ -88,6 +88,7 @@ enum Op : char {
 
 
     CLOSE_UPVAL, // close an open upvalue (move from stack to heap)
+    CLEAR_LOCAL, // [Op, char slot] — rc-dec the slot's value without changing sp
 }
 
 // ============================================================================

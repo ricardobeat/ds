@@ -1,0 +1,6 @@
+// string_concat — string building via concatenation in a loop
+fn repeat_n(s, n, acc) {
+  if n === 0 then acc
+  else repeat_n(s, n - 1, acc + s)
+}
+repeat_n("ab", 50, "")

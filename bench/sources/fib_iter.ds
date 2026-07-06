@@ -1,0 +1,7 @@
+// fib_iter — tail-recursive fibonacci (iterative via TCO)
+// Returns fib(N). Result of fib(35) is 9227465.
+fn fib(n, a, b) {
+  if n === 0 then a
+  else fib(n - 1, b, a + b)
+}
+fib(35, 0, 1)

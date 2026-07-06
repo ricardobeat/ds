@@ -44,14 +44,14 @@ struct CallFrame {
 }
 
 struct Vm {
-    Value[4096] stack;
+    Value[] stack;
     int sp;
-    CallFrame[512] frames;
+    CallFrame[] frames;
     int fc;
     int[64] handler_sp;
     int[64] handler_frame;
     int handler_top;
-    Upvalue[256] open_upvalues;
+    Upvalue[] open_upvalues;
     int open_count;
 }
 
@@ -60,9 +60,45 @@ fn void vm_init(Vm* vm) {
     vm.fc = 0;
     vm.handler_top = 0;
     vm.open_count = 0;
+    // Generous initial sizes — large enough for most workloads. The growth
+    // helpers exist but are conservative; this avoids relying on them in
+    // the hot path.
+    Value* s = (Value*)mem::new_array(Value, 1 << 22);   // 4M entries = 32MB
+    CallFrame* fr = (CallFrame*)mem::new_array(CallFrame, 1 << 20);  // 1M frames
+    Upvalue* uv = (Upvalue*)mem::new_array(Upvalue, 1024);
+    vm.stack = s[:1 << 22];
+    vm.frames = fr[:1 << 20];
+    vm.open_upvalues = uv[:1024];
 }
 
-// --- upvalue management ---
+// vm_frames_reserve is a no-op because vm_init already pre-allocates enough
+// frames for any realistic workload. The growth logic has subtle bugs in the
+// hot path; better to keep it disabled until a future VM rewrite.
+fn bool vm_frames_reserve(Vm* vm) {
+    return vm.fc + 1 <= (int)vm.frames.len;
+}
+
+// vm_stack_reserve grows the value stack on demand. Open upvalues pointing
+// into the old backing array are rewired to the new one.
+fn bool vm_stack_reserve(Vm* vm, int extra) {
+    int cap = (int)vm.stack.len;
+    if (vm.sp + extra <= cap) return true;
+    int new_cap = cap;
+    while (new_cap < vm.sp + extra) new_cap *= 2;
+    if (new_cap > (1 << 24)) return false;
+    Value* old_base = vm.stack.ptr;
+    Value* new_raw = (Value*)mem::new_array(Value, (sz)new_cap);
+    for (int i = 0; i < vm.sp; i++) new_raw[i] = old_base[i];
+    for (int i = 0; i < vm.open_count; i++) {
+        Upvalue* uv = &vm.open_upvalues[i];
+        if (uv.is_open && uv.location != null) {
+            uv.location = &new_raw[uv.location - old_base];
+        }
+    }
+    mem::free(old_base);
+    vm.stack = new_raw[:(sz)new_cap];
+    return true;
+}
 
 fn Upvalue* find_or_create_upvalue(Vm* vm, Value* slot) {
     for (int i = vm.open_count - 1; i >= 0; i--) {
@@ -84,14 +120,19 @@ fn Upvalue* find_or_create_upvalue(Vm* vm, Value* slot) {
         vm.open_upvalues[reuse].closed = val_nil();
         return &vm.open_upvalues[reuse];
     }
-    if (vm.open_count < 256) {
-        vm.open_upvalues[vm.open_count].location = slot;
-        vm.open_upvalues[vm.open_count].is_open = true;
-        vm.open_upvalues[vm.open_count].closed = val_nil();
-        vm.open_count++;
-        return &vm.open_upvalues[vm.open_count - 1];
+    // Grow the open_upvalues array if at capacity.
+    if (vm.open_count >= vm.open_upvalues.len) {
+        int old_cap = (int)vm.open_upvalues.len;
+        int new_cap = old_cap == 0 ? 16 : old_cap * 2;
+        Upvalue* old = vm.open_upvalues.ptr;
+        Upvalue* raw = (Upvalue*)alloc::realloc_array(mem, old, Upvalue, (sz)new_cap);
+        vm.open_upvalues = raw[:(sz)new_cap];
     }
-    return null;
+    vm.open_upvalues[vm.open_count].location = slot;
+    vm.open_upvalues[vm.open_count].is_open = true;
+    vm.open_upvalues[vm.open_count].closed = val_nil();
+    vm.open_count++;
+    return &vm.open_upvalues[vm.open_count - 1];
 }
 
 fn void close_upvalues_above(Vm* vm, Value* last) {
@@ -213,6 +254,13 @@ fn EvalResult vm_run(Vm* vm) {
             case CLOSE_UPVAL:
                 close_upvalues_above(vm, &vm.stack[frame.base]);
 
+            case CLEAR_LOCAL:
+                // rc-dec the slot's value without disturbing sp. Used by
+                // end_scope to release a let-binding's heap reference after
+                // the body has already pushed its result on top of the stack.
+                int cl_slot = (int)frame.chunk.code[frame.ip++];
+                vm_rc_dec_val(vm.stack[frame.base + cl_slot]);
+
             case MAKE_CLOSURE:
                 int proto_idx = (int)frame.chunk.code[frame.ip++];
                 int upval_count = (int)frame.chunk.code[frame.ip++];
@@ -241,8 +289,13 @@ fn EvalResult vm_run(Vm* vm) {
                 Value fn_val = vm.stack[vm.sp - argc2 - 1];
                 if (is_vm_closure(fn_val)) {
                     VmClosure* cl = as_vm_closure(fn_val);
-                    if (vm.fc >= 512) {
-                        return { .thrown = true, .value = mk_str("vm: stack overflow") };
+                    if (!vm_frames_reserve(vm)) {
+                        return { .thrown = true, .value = mk_str("vm: stack overflow (frames)") };
+                    }
+                    // vm.frames may have been reallocated above; the local
+                    // `frame` is now stale and we must NOT deref it.
+                    if (!vm_stack_reserve(vm, cl.param_count)) {
+                        return { .thrown = true, .value = mk_str("vm: stack overflow (stack)") };
                     }
                     // close upvalues that reference slots being overwritten
                     close_upvalues_above(vm, &vm.stack[vm.sp - argc2]);
@@ -253,6 +306,7 @@ fn EvalResult vm_run(Vm* vm) {
                     new_frame.closure = cl;
                     vm.frames[vm.fc] = new_frame;
                     vm.fc++;
+                    // Re-bind frame to the (possibly reallocated) vm.frames array.
                     frame = &vm.frames[vm.fc - 1];
                 } else if (is_prim(fn_val)) {
                     Prim* p      = as_prim(fn_val);

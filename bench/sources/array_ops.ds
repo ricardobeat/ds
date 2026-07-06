@@ -1,0 +1,11 @@
+// array_ops — build and process a 1000-element array
+fn build_arr(n, i, acc) {
+  if i === n then acc
+  else build_arr(n, i + 1, append(acc, i * 2))
+}
+fn sum_arr(arr, i, acc) {
+  if i === len(arr) then acc
+  else sum_arr(arr, i + 1, acc + arr[i])
+}
+let arr = build_arr(1000, 0, [])
+sum_arr(arr, 0, 0)

@@ -1,0 +1,6 @@
+// fact — tail-recursive factorial (TCO iteration)
+fn fact(n, acc) {
+  if n === 0 then acc
+  else fact(n - 1, acc * n)
+}
+fact(15, 1)

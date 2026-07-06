@@ -1,0 +1,11 @@
+// record_ops — build, query 500 records via fold (no index-then-field syntax)
+fn make_recs(n, i, acc) {
+  if i === n then acc
+  else make_recs(n, i + 1, append(acc, {x: i, y: i * 2}))
+}
+fn fold(arr, f, i, acc) {
+  if i === len(arr) then acc
+  else fold(arr, f, i + 1, f(acc, arr[i]))
+}
+let recs = make_recs(500, 0, [])
+fold(recs, fn(a, r) { a + r.x }, 0, 0)

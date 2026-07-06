@@ -1,0 +1,6 @@
+// sum_loop — imperative-style sum from 1..N using tail recursion
+fn sum_to(n, acc) {
+  if n === 0 then acc
+  else sum_to(n - 1, acc + n)
+}
+sum_to(1000000, 0)
