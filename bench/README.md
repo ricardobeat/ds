@@ -11,7 +11,7 @@ bench/
 ├── sources/         # DS source
 ├── refs/{js,py,lua,luajit,qjs,wren}/   # hand-ported equivalents
 ├── run.sh           # sweep script
-└── results.csv      # machine-readable timings
+└── results.json     # timings: { benchmarks, runtimes, times }
 ```
 
 ## Run
@@ -23,13 +23,24 @@ bench/run.sh fib_iter             # one
 bench/run.sh fib_iter fact        # subset
 ```
 
+`bench/run.sh` writes `bench/results.json` and prints a pivoted table
+(benchmarks × runtimes). `—` cells = no measurement (stack overflow or
+not ported).
+
 ## Output
 
-`bench/run.sh` writes:
-- `bench/results.csv` — long format (one row per measurement)
-- `bench/results.md` — pivoted Markdown table (benchmarks × runtimes)
+`results.json` shape:
 
-`—` in the table = not run / not ported / stack overflow.
+```json
+{
+  "benchmarks": ["array_ops", "closure_higher", ...],
+  "runtimes":   ["tw", "vm", "node", "qjs", "python", "lua", "luajit", "wren"],
+  "times": {
+    "array_ops": { "tw": 0.007, "vm": 0.006, "node": 0.039, "qjs": null, ... },
+    ...
+  }
+}
+```
 
 
 Wren is iterative-only, so its `nested_recursion` is a hand-written

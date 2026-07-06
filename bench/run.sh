@@ -5,16 +5,15 @@
 #         bench/run.sh fib_iter           # one benchmark
 #         bench/run.sh fib_iter fact      # subset
 #
-# Output: bench/results.csv (appended) and printed table.
-# Each row: benchmark,runtime,time_s
+# Writes:
+#   bench/results.json — raw timings
+# Prints a pivoted table (rendered via jtbl if installed, else fallback).
 #
 # RSS sampling via `ps` is skipped: the shell sandbox doesn't permit it.
-# Use Activity Monitor / `top` for a one-off RSS check.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-OUT=bench/results.csv
-echo "benchmark,runtime,time_s" > "$OUT"
+JSON=bench/results.json
 
 # Discover benchmarks
 if [ $# -gt 0 ]; then
@@ -27,7 +26,6 @@ else
 fi
 
 # Runtime entries: "label|arg0 arg1 arg2"
-# We split the part after the first ':' on whitespace into an array.
 RUNTIMES=(
   "tw|./build/engine run"
   "vm|./build/engine vm"
@@ -41,9 +39,11 @@ RUNTIMES=(
 EXT=( ".ds"  ".ds"  ".js"  ".js"  ".py"  ".lua"  ".lua"  ".wren" )
 SUBDIR=( ""     ""     "js"   "qjs"  "py"   "lua"   "luajit" "wren" )
 
+# Stable runtime order for output columns
+RUNTIME_ORDER=( tw vm node qjs python lua luajit wren )
+
 run_one() {
   local bench=$1 rt=$2 cmdline=$3 ext=$4 sub=$5
-  # cmdline may have multiple words — split into argv array
   local -a argv
   # shellcheck disable=SC2206
   argv=( $cmdline )
@@ -53,18 +53,18 @@ run_one() {
   else
     src="bench/sources/${bench}${ext}"
   fi
-  [ -f "$src" ] || { echo "  ! missing $src"; return; }
+  [ -f "$src" ] || { echo "  ! missing $src"; return 1; }
 
   local start end t
   start=$(date +%s.%N)
   if ! "${argv[@]}" "$src" > /dev/null 2>&1; then
     echo "  $rt FAILED (${argv[*]} $src)"
-    return
+    return 1
   fi
   end=$(date +%s.%N)
   t=$(awk -v s="$start" -v e="$end" 'BEGIN{printf "%.3f", e - s}')
-  printf "%s,%s,%s\n" "$bench" "$rt" "$t" >> "$OUT"
-  printf "  %-7s %8ss\n" "$rt" "$t"
+  echo "  $rt ${t}s"
+  printf '%s\t%s\t%s\n' "$bench" "$rt" "$t" >> "$JSON.tsv"
 }
 
 sweep() {
@@ -74,40 +74,66 @@ sweep() {
       local entry="${RUNTIMES[$i]}"
       local rt="${entry%%|*}"
       local cmdline="${entry#*|}"
-      run_one "$b" "$rt" "$cmdline" "${EXT[$i]}" "${SUBDIR[$i]}"
+      run_one "$b" "$rt" "$cmdline" "${EXT[$i]}" "${SUBDIR[$i]}" || true
     done
   done
 }
 
+# Run all benchmarks, accumulating a TSV (benchmark, runtime, time)
+: > "$JSON.tsv"
 sweep
 
-# Pivot CSV to a Markdown table: benchmarks as rows, runtimes as columns.
-# Discover runtimes from the data rows (the CSV header is
-# benchmark,runtime,time_s, so we can't use it).
-pivot_md() {
-  awk -F, 'NR==1 { next }
-           { b=$1; r=$2; t=$3
-             if (!(b in seen))  { seen[b]=1;  order[++nb]=b }
-             if (!(r in rseen)) { rseen[r]=1; rorder[++nr]=r }
-             data[b SUBSEP r]=t }
-           END {
-             printf "| benchmark "
-             for (i=1;i<=nr;i++) printf "| %s ", rorder[i]
-             print "|"
-             printf "|---"
-             for (i=1;i<=nr;i++) printf "|---"
-             print "|"
-             for (j=1;j<=nb;j++) {
-               b=order[j]
-               printf "| %s ", b
-               for (i=1;i<=nr;i++) { v=data[b SUBSEP rorder[i]]; printf "| %s ", (v?v:"—") }
-               print "|"
-             }
-           }' "$OUT"
-}
+# Build the JSON document
+{
+  echo "{"
+  printf '  "benchmarks": ['
+  first=1
+  for b in "${BENS[@]}"; do
+    [ $first -eq 0 ] && printf ", "
+    first=0
+    printf '"%s"' "$b"
+  done
+  echo "],"
+  printf '  "runtimes": ['
+  first=1
+  for r in "${RUNTIME_ORDER[@]}"; do
+    [ $first -eq 0 ] && printf ", "
+    first=0
+    printf '"%s"' "$r"
+  done
+  echo "],"
+  echo '  "times": {'
+  first=1
+  for b in "${BENS[@]}"; do
+    [ $first -eq 0 ] && printf ",\n"
+    first=0
+    printf '    "%s": {' "$b"
+    inner=1
+    for r in "${RUNTIME_ORDER[@]}"; do
+      t=$(awk -F'\t' -v b="$b" -v r="$r" '$1==b && $2==r {print $3; exit}' "$JSON.tsv")
+      [ $inner -eq 0 ] && printf ", "
+      inner=0
+      if [ -n "$t" ]; then
+        printf '"%s": %s' "$r" "$t"
+      else
+        printf '"%s": null' "$r"
+      fi
+    done
+    printf "}"
+  done
+  echo ""
+  echo "  }"
+  echo "}"
+} | jq . > "$JSON"
+rm -f "$JSON.tsv"
 
+# Render pivoted table.
 echo
-pivot_md > bench/results.md
-echo "wrote bench/results.csv, bench/results.md"
-echo
-cat bench/results.md
+echo "─── table ───"
+jq --arg dash '—' -r '
+  .runtimes as $rs |
+  (["benchmark"] + $rs | join("\t")),
+  (.benchmarks[] as $b |
+    ([$b] + [ $rs[] as $r | (.times[$b][$r] // $dash) ] | join("\t"))
+  )
+' "$JSON" | column -ts $'\t'

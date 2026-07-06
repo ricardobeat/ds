@@ -1,0 +1,104 @@
+{
+  "benchmarks": [
+    "array_ops",
+    "closure_higher",
+    "fact",
+    "fib_iter",
+    "nested_recursion",
+    "record_ops",
+    "string_concat",
+    "sum_loop"
+  ],
+  "runtimes": [
+    "tw",
+    "vm",
+    "node",
+    "qjs",
+    "python",
+    "lua",
+    "luajit",
+    "wren"
+  ],
+  "times": {
+    "array_ops": {
+      "tw": 0.007,
+      "vm": 0.006,
+      "node": 0.039,
+      "qjs": null,
+      "python": null,
+      "lua": 0.005,
+      "luajit": 0.005,
+      "wren": 0.007
+    },
+    "closure_higher": {
+      "tw": 0.005,
+      "vm": 0.005,
+      "node": 0.036,
+      "qjs": 0.006,
+      "python": 0.021,
+      "lua": 0.005,
+      "luajit": 0.006,
+      "wren": 0.006
+    },
+    "fact": {
+      "tw": 0.005,
+      "vm": 0.004,
+      "node": 0.035,
+      "qjs": 0.005,
+      "python": 0.020,
+      "lua": 0.005,
+      "luajit": 0.005,
+      "wren": 0.006
+    },
+    "fib_iter": {
+      "tw": 0.005,
+      "vm": 0.004,
+      "node": 0.034,
+      "qjs": 0.005,
+      "python": 0.019,
+      "lua": 0.004,
+      "luajit": 0.004,
+      "wren": 0.006
+    },
+    "nested_recursion": {
+      "tw": 0.328,
+      "vm": 0.085,
+      "node": 0.047,
+      "qjs": null,
+      "python": 0.153,
+      "lua": 0.046,
+      "luajit": 0.008,
+      "wren": 0.939
+    },
+    "record_ops": {
+      "tw": 0.006,
+      "vm": 0.005,
+      "node": 0.035,
+      "qjs": 0.009,
+      "python": 0.020,
+      "lua": 0.005,
+      "luajit": 0.005,
+      "wren": 0.006
+    },
+    "string_concat": {
+      "tw": 0.004,
+      "vm": 0.005,
+      "node": 0.034,
+      "qjs": 0.006,
+      "python": 0.020,
+      "lua": 0.005,
+      "luajit": 0.005,
+      "wren": 0.006
+    },
+    "sum_loop": {
+      "tw": 0.107,
+      "vm": 0.025,
+      "node": null,
+      "qjs": null,
+      "python": null,
+      "lua": 0.026,
+      "luajit": 0.009,
+      "wren": 0.037
+    }
+  }
+}
