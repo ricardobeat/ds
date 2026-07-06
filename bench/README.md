@@ -23,20 +23,14 @@ bench/run.sh fib_iter             # one
 bench/run.sh fib_iter fact        # subset
 ```
 
-## Last sweep (Apple M-series, wall time in seconds)
+## Output
 
-| benchmark         | tw    | vm    | node  | qjs   | python | lua   | luajit | wren  |
-|-------------------|-------|-------|-------|-------|--------|-------|--------|-------|
-| fib_iter          | 0.005 | 0.004 | 0.034 | 0.006 | 0.020  | 0.005 | 0.004  | 0.006 |
-| fact              | 0.004 | 0.005 | 0.034 | 0.006 | 0.019  | 0.005 | 0.005  | 0.006 |
-| sum_loop          | 0.112 | 0.026 | stack | stack | stack  | 0.030 | 0.010  | 0.037 |
-| array_ops         | 0.007 | 0.007 | 0.041 | —     | —      | 0.006 | 0.006  | 0.007 |
-| record_ops        | 0.005 | 0.005 | 0.036 | 0.010 | 0.020  | 0.005 | 0.005  | 0.006 |
-| string_concat     | 0.004 | 0.004 | 0.034 | 0.006 | 0.019  | 0.005 | 0.004  | 0.006 |
-| closure_higher    | 0.005 | 0.005 | 0.036 | 0.006 | 0.020  | 0.006 | 0.005  | 0.007 |
-| nested_recursion  | 0.349 | 0.084 | 0.051 | —     | 0.155  | 0.046 | 0.009  | 0.948 |
+`bench/run.sh` writes:
+- `bench/results.csv` — long format (one row per measurement)
+- `bench/results.md` — pivoted Markdown table (benchmarks × runtimes)
 
-`stack` = host stack overflow at 1M recursions; `—` = not ported.
+`—` in the table = not run / not ported / stack overflow.
+
 
 Wren is iterative-only, so its `nested_recursion` is a hand-written
 trampolined version. DS is the only runtime in the table that gets

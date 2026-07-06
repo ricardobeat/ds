@@ -81,6 +81,33 @@ sweep() {
 
 sweep
 
+# Pivot CSV to a Markdown table: benchmarks as rows, runtimes as columns.
+# Discover runtimes from the data rows (the CSV header is
+# benchmark,runtime,time_s, so we can't use it).
+pivot_md() {
+  awk -F, 'NR==1 { next }
+           { b=$1; r=$2; t=$3
+             if (!(b in seen))  { seen[b]=1;  order[++nb]=b }
+             if (!(r in rseen)) { rseen[r]=1; rorder[++nr]=r }
+             data[b SUBSEP r]=t }
+           END {
+             printf "| benchmark "
+             for (i=1;i<=nr;i++) printf "| %s ", rorder[i]
+             print "|"
+             printf "|---"
+             for (i=1;i<=nr;i++) printf "|---"
+             print "|"
+             for (j=1;j<=nb;j++) {
+               b=order[j]
+               printf "| %s ", b
+               for (i=1;i<=nr;i++) { v=data[b SUBSEP rorder[i]]; printf "| %s ", (v?v:"—") }
+               print "|"
+             }
+           }' "$OUT"
+}
+
 echo
-echo "wrote $OUT"
-column -ts, < "$OUT"
+pivot_md > bench/results.md
+echo "wrote bench/results.csv, bench/results.md"
+echo
+cat bench/results.md
