@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Benchmarks · new-engine</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .chart-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 1.5rem;
+      margin: 2rem 0;
+    }
+
+    .chart-card {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+    }
+
+    .chart-card h3 {
+      margin: 0 0 0.75rem;
+      font-size: 0.95rem;
+      color: var(--heading);
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    }
+
+    .chart-card svg {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .bar {
+      transition: opacity 0.15s ease;
+    }
+
+    .bar:hover {
+      opacity: 0.8;
+    }
+
+    .bar-label {
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 10px;
+      fill: var(--fg);
+    }
+
+    .bar-value {
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 9px;
+      fill: var(--muted);
+    }
+
+    .axis-line {
+      stroke: var(--border);
+      stroke-width: 1;
+    }
+
+    .tick-line {
+      stroke: var(--border);
+      stroke-width: 1;
+      stroke-dasharray: 2 2;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem 1.25rem;
+      margin: 1.5rem 0 2rem;
+      padding: 1rem;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 0.8rem;
+      color: var(--fg);
+    }
+
+    .legend-swatch {
+      width: 0.75rem;
+      height: 0.75rem;
+      border-radius: 2px;
+    }
+
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1.5rem 0;
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 0.8rem;
+    }
+
+    .data-table th,
+    .data-table td {
+      padding: 0.5rem 0.6rem;
+      text-align: right;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .data-table th:first-child,
+    .data-table td:first-child {
+      text-align: left;
+    }
+
+    .data-table th {
+      color: var(--heading);
+      background: var(--code-bg);
+    }
+
+    .data-table td.na {
+      color: var(--muted);
+      font-style: italic;
+    }
+
+    .note {
+      color: var(--muted);
+      font-size: 0.95rem;
+      margin-bottom: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <span class="brand">new-engine</span>
+    <a href="index.html">Overview</a>
+    <a href="examples.html">Examples</a>
+    <a href="benchmarks.html" aria-current="page">Benchmarks</a>
+  </nav>
+
+  <main>
+    <h1>Benchmarks</h1>
+    <p class="lede">Eight small programs run across eight runtimes. Lower is faster. Missing bars mean the runtime did not finish or was not measured for that benchmark.</p>
+
+    <div class="legend" id="legend"></div>
+    <div class="chart-grid" id="charts"></div>
+
+    <h2>Raw times (seconds)</h2>
+    <table class="data-table" id="table"></table>
+  </main>
+
+  <script>
+    const data = {
+  "benchmarks": [
+    "array_ops",
+    "closure_higher",
+    "fact",
+    "fib_iter",
+    "nested_recursion",
+    "record_ops",
+    "string_concat",
+    "sum_loop"
+  ],
+  "runtimes": [
+    "tw",
+    "vm",
+    "node",
+    "qjs",
+    "python",
+    "lua",
+    "luajit",
+    "wren"
+  ],
+  "times": {
+    "array_ops": {
+      "tw": 0.007,
+      "vm": 0.006,
+      "node": 0.039,
+      "qjs": null,
+      "python": null,
+      "lua": 0.005,
+      "luajit": 0.005,
+      "wren": 0.007
+    },
+    "closure_higher": {
+      "tw": 0.005,
+      "vm": 0.005,
+      "node": 0.036,
+      "qjs": 0.006,
+      "python": 0.021,
+      "lua": 0.005,
+      "luajit": 0.006,
+      "wren": 0.006
+    },
+    "fact": {
+      "tw": 0.005,
+      "vm": 0.004,
+      "node": 0.035,
+      "qjs": 0.005,
+      "python": 0.02,
+      "lua": 0.005,
+      "luajit": 0.005,
+      "wren": 0.006
+    },
+    "fib_iter": {
+      "tw": 0.005,
+      "vm": 0.004,
+      "node": 0.034,
+      "qjs": 0.005,
+      "python": 0.019,
+      "lua": 0.004,
+      "luajit": 0.004,
+      "wren": 0.006
+    },
+    "nested_recursion": {
+      "tw": 0.328,
+      "vm": 0.085,
+      "node": 0.047,
+      "qjs": null,
+      "python": 0.153,
+      "lua": 0.046,
+      "luajit": 0.008,
+      "wren": 0.939
+    },
+    "record_ops": {
+      "tw": 0.006,
+      "vm": 0.005,
+      "node": 0.035,
+      "qjs": 0.009,
+      "python": 0.02,
+      "lua": 0.005,
+      "luajit": 0.005,
+      "wren": 0.006
+    },
+    "string_concat": {
+      "tw": 0.004,
+      "vm": 0.005,
+      "node": 0.034,
+      "qjs": 0.006,
+      "python": 0.02,
+      "lua": 0.005,
+      "luajit": 0.005,
+      "wren": 0.006
+    },
+    "sum_loop": {
+      "tw": 0.107,
+      "vm": 0.025,
+      "node": null,
+      "qjs": null,
+      "python": null,
+      "lua": 0.026,
+      "luajit": 0.009,
+      "wren": 0.037
+    }
+  }
+};
+
+    const palette = {
+      tw:     "#c44b1f",
+      vm:     "#e89c3a",
+      node:   "#4f9d69",
+      qjs:    "#3d7ea6",
+      python: "#d4ac0d",
+      lua:    "#7b68ee",
+      luajit: "#e06c75",
+      wren:   "#56b6c2"
+    };
+
+    const labels = {
+      tw:     "DS (tree-walk)",
+      vm:     "DS (VM)",
+      node:   "Node.js",
+      qjs:    "QuickJS",
+      python: "Python",
+      lua:    "Lua",
+      luajit: "LuaJIT",
+      wren:   "Wren"
+    };
+
+    function formatTime(s) {
+      if (s === null || s === undefined) return "n/a";
+      if (s < 0.001) return s.toFixed(4);
+      if (s < 0.01) return s.toFixed(3);
+      return s.toFixed(3);
+    }
+
+    const legendEl = document.getElementById("legend");
+    for (const rt of data.runtimes) {
+      const item = document.createElement("span");
+      item.className = "legend-item";
+      item.innerHTML = `<span class="legend-swatch" style="background:${palette[rt]}"></span>${labels[rt]}`;
+      legendEl.appendChild(item);
+    }
+
+    const chartsEl = document.getElementById("charts");
+    const rowHeight = 22;
+    const barHeight = 14;
+    const leftPad = 86;
+    const rightPad = 56;
+    const topPad = 10;
+    const bottomPad = 28;
+
+    for (const bench of data.benchmarks) {
+      const entries = data.runtimes
+        .map(rt => ({ rt, time: data.times[bench][rt] }))
+        .filter(e => e.time !== null && e.time !== undefined)
+        .sort((a, b) => a.time - b.time);
+
+      const maxTime = entries.length ? Math.max(...entries.map(e => e.time)) : 1;
+      const niceMax = maxTime * 1.12;
+      const height = topPad + entries.length * rowHeight + bottomPad;
+      const width = 360;
+      const plotWidth = width - leftPad - rightPad;
+
+      const card = document.createElement("div");
+      card.className = "chart-card";
+
+      const title = document.createElement("h3");
+      title.textContent = bench;
+      card.appendChild(title);
+
+      const ns = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(ns, "svg");
+      svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+      svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+
+      const axisY = topPad + entries.length * rowHeight;
+      const axisLine = document.createElementNS(ns, "line");
+      axisLine.setAttribute("x1", leftPad);
+      axisLine.setAttribute("y1", axisY);
+      axisLine.setAttribute("x2", width - rightPad);
+      axisLine.setAttribute("y2", axisY);
+      axisLine.setAttribute("class", "axis-line");
+      svg.appendChild(axisLine);
+
+      for (let i = 0; i <= 3; i++) {
+        const x = leftPad + (plotWidth * i / 3);
+        const tick = document.createElementNS(ns, "line");
+        tick.setAttribute("x1", x);
+        tick.setAttribute("y1", topPad);
+        tick.setAttribute("x2", x);
+        tick.setAttribute("y2", axisY);
+        tick.setAttribute("class", "tick-line");
+        svg.appendChild(tick);
+
+        const label = document.createElementNS(ns, "text");
+        label.setAttribute("x", x);
+        label.setAttribute("y", height - 6);
+        label.setAttribute("text-anchor", "middle");
+        label.setAttribute("class", "bar-value");
+        label.textContent = formatTime(niceMax * i / 3);
+        svg.appendChild(label);
+      }
+
+      entries.forEach((e, i) => {
+        const y = topPad + i * rowHeight;
+        const barW = (e.time / niceMax) * plotWidth;
+
+        const bar = document.createElementNS(ns, "rect");
+        bar.setAttribute("x", leftPad);
+        bar.setAttribute("y", y + (rowHeight - barHeight) / 2);
+        bar.setAttribute("width", Math.max(1, barW));
+        bar.setAttribute("height", barHeight);
+        bar.setAttribute("rx", 2);
+        bar.setAttribute("fill", palette[e.rt]);
+        bar.setAttribute("class", "bar");
+        svg.appendChild(bar);
+
+        const tip = document.createElementNS(ns, "title");
+        tip.textContent = `${labels[e.rt]}: ${formatTime(e.time)}s on ${bench}`;
+        bar.appendChild(tip);
+
+        const name = document.createElementNS(ns, "text");
+        name.setAttribute("x", leftPad - 6);
+        name.setAttribute("y", y + rowHeight / 2 + 3);
+        name.setAttribute("text-anchor", "end");
+        name.setAttribute("class", "bar-label");
+        name.textContent = labels[e.rt];
+        svg.appendChild(name);
+
+        const val = document.createElementNS(ns, "text");
+        val.setAttribute("x", leftPad + barW + 4);
+        val.setAttribute("y", y + rowHeight / 2 + 3);
+        val.setAttribute("class", "bar-value");
+        val.textContent = formatTime(e.time) + "s";
+        svg.appendChild(val);
+      });
+
+      card.appendChild(svg);
+      chartsEl.appendChild(card);
+    }
+
+    const tableEl = document.getElementById("table");
+    const thead = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    headRow.appendChild(document.createElement("th")).textContent = "benchmark";
+    for (const rt of data.runtimes) {
+      headRow.appendChild(document.createElement("th")).textContent = rt;
+    }
+    thead.appendChild(headRow);
+    tableEl.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    for (const bench of data.benchmarks) {
+      const row = document.createElement("tr");
+      row.appendChild(document.createElement("td")).textContent = bench;
+      for (const rt of data.runtimes) {
+        const td = document.createElement("td");
+        const t = data.times[bench][rt];
+        if (t === null || t === undefined) {
+          td.className = "na";
+          td.textContent = "—";
+        } else {
+          td.textContent = formatTime(t);
+        }
+        row.appendChild(td);
+      }
+      tbody.appendChild(row);
+    }
+    tableEl.appendChild(tbody);
+  </script>
+</body>
+</html>
