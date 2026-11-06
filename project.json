@@ -54,6 +54,25 @@
         "src/compiler.c3", "src/chunk.c3", "src/vm.c3", "src/embed.c3",
         "bench/main.c3"
       ]
+    },
+    "jit-test": {
+      "type": "executable",
+      "sources": ["src/jit.c3", "jit_test.c3"],
+      "c-sources": ["src/jit_wrapper.c", "sljit/sljit_src/sljitLir.c"],
+      "c-include-dirs": ["sljit/sljit_src"],
+      "link-args": ["-lpthread", "-lm"]
+    },
+    "bench-jit": {
+      "type": "executable",
+      "sources": [
+        "src/main.c3", "src/parser.c3", "src/formatter.c3",
+        "src/compiler.c3", "src/chunk.c3", "src/vm.c3", "src/embed.c3",
+        "src/jit.c3", "src/jit_backend.c3",
+        "bench_jit.c3"
+      ],
+      "c-sources": ["src/jit_wrapper.c", "sljit/sljit_src/sljitLir.c"],
+      "c-include-dirs": ["sljit/sljit_src"],
+      "link-args": ["-lpthread", "-lm"]
     }
   },
   "cpu": "generic",

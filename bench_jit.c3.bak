@@ -1,0 +1,90 @@
+module engine;
+import std::io;
+import libc;
+
+alias IntFn = fn iptr(iptr n);
+
+// Use @volatile on the accumulator to prevent LLVM from optimizing the loop away.
+// Also use a slightly harder-to-optimize inner op (integer multiply).
+
+fn iptr sum_c3(iptr n) @noinline {
+    iptr s = 0;
+    for (iptr i = 0; i < n; i++) s += i * 3 - i * 2;  // effectively just +i but opaque
+    return s;
+}
+
+fn void* jit_compile_sum() {
+    JitCompiler c = jit_create_compiler(null);
+    if (!c) return null;
+
+    int sn = jit_s(0);  // n
+    int ss = jit_s(1);  // sum
+    int si = jit_s(2);  // i
+
+    jit_emit_enter(c, 0, jit_args1(JIT_ARG_W, JIT_ARG_W), 3, 3, 0);
+
+    jit_emit_op1(c, JIT_MOV, ss, 0, JIT_IMM, 0);
+    jit_emit_op1(c, JIT_MOV, si, 0, JIT_IMM, 0);
+
+    JitLabel loop = jit_emit_label(c);
+    JitJump jmp_done = jit_emit_cmp(c,
+        JIT_GREATER_EQUAL | JIT_JUMP_IF_NON_ZERO,
+        si, 0, sn, 0);
+
+    // sum += i * 3 - i * 2 (effectively i, but the JIT can't optimize this away)
+    jit_emit_op2(c, JIT_MUL, JIT_R0, 0, si, 0, JIT_IMM, 3);  // tmp = i*3
+    jit_emit_op2(c, JIT_MUL, JIT_R1, 0, si, 0, JIT_IMM, 2);  // R1 = i*2
+    jit_emit_op2(c, JIT_SUB, JIT_R0, 0, JIT_R0, 0, JIT_R1, 0);  // R0 = i*3 - i*2 = i
+    jit_emit_op2(c, JIT_ADD, ss, 0, ss, 0, JIT_R0, 0);  // sum += R0
+
+    jit_emit_op2(c, JIT_ADD, si, 0, si, 0, JIT_IMM, 1);
+
+    JitJump jmp_loop = jit_emit_jump(c, JIT_JUMP);
+    jit_set_label(jmp_loop, loop);
+
+    jit_set_label(jmp_done, loop);
+    jit_emit_op1(c, JIT_MOV, JIT_R0, 0, ss, 0);
+    jit_emit_return(c, JIT_MOV, JIT_R0, 0);
+
+    void* code = jit_generate_code(c, 0, null);
+    jit_free_compiler(c);
+    return code;
+}
+
+const iptr N = 100_000_000;
+
+fn void main() {
+    io::printfn("Platform: aarch64, %d SLJIT regs", jit_num_registers());
+    io::printfn("Loop: sum(i) for i=0..%d (%dM iters)", N, N / 1_000_000);
+    io::printfn("");
+
+    // C3 native
+    long t0 = libc::clock();
+    iptr r1 = sum_c3(N);
+    long t1 = libc::clock();
+
+    // SLJIT JIT
+    void* code = jit_compile_sum();
+    iptr r2 = 0;
+    long t2 = 0;
+    long t3 = 0;
+    if (code) {
+        IntFn f = (IntFn)code;
+        f(1000);  // warmup
+        t2 = libc::clock();
+        r2 = f(N);
+        t3 = libc::clock();
+        jit_free_code(code, null);
+    }
+
+    double ms1 = (double)(t1 - t0) * 1000.0 / (double)libc::CLOCKS_PER_SEC;
+    double ms2 = code ? (double)(t3 - t2) * 1000.0 / (double)libc::CLOCKS_PER_SEC : 0;
+
+    io::printfn("C3 native (-O2): result=%d  %.0f ms", r1, ms1);
+    io::printfn("SLJIT JIT:       result=%d  %.0f ms", r2, ms2);
+
+    if (ms1 > 0) {
+        io::printfn("");
+        io::printfn("SLJIT is %.1fx slower than C3 -O2", ms2 / ms1);
+    }
+}
